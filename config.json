@@ -1,0 +1,35 @@
+{
+  "checkIntervalMinutes": 60,
+  "backupConfigs": true,
+  "autoRestartResource": false,
+  "adminAcePermission": "command.update",
+  "discordWebhook": "https://discord.com/api/webhooks/1559169181130162216/yNDQTsBuYRVlc1UkL594pVfIW5xKK-gJXcqpQ6UOI_J8F0zWZp8I5LeqeB-oHiwQU50W",
+  "managedScripts": [
+    {
+      "resourceName": "LNS_Housing",
+      "githubRepo": "LumaNodeStudios/LNS_Housing",
+      "branch": "main",
+      "useReleases": true,
+      "autoUpdate": true,
+      "subfolder": "",
+      "configFiles": [
+        "shared/settings.lua",
+        "shared/sv_settings.lua",
+        "shared/furniture.lua"
+      ],
+      "ignoreFiles": []
+    },
+    {
+      "resourceName": "LNS_Fuel",
+      "githubRepo": "LumaNodeStudios/LNS_Fuel",
+      "branch": "main",
+      "useReleases": true,
+      "autoUpdate": true,
+      "subfolder": "",
+      "configFiles": [
+        "shared/settings.lua"
+      ],
+      "ignoreFiles": []
+    }
+  ]
+}
