@@ -302,28 +302,3 @@ If a GitHub repository contains multiple FiveM resources or stores the resource 
 ```
 
 The updater extracts only the contents of the specified subfolder directly into the target resource directory.
-
----
-
-## Troubleshooting & FAQ
-
-### GitHub API Rate Limiting (403 Forbidden)
-GitHub imposes a rate limit of 60 unauthenticated requests per hour per IP address. If you run frequent checks or have many resources:
-1. Generate a Personal Access Token on GitHub (Settings -> Developer Settings -> Personal access tokens -> Fine-grained or Classic with `public_repo` read access).
-2. Add the token to `config.json`:
-   ```json
-   "githubToken": "ghp_yourPersonalAccessTokenHere"
-   ```
-3. Authenticated requests increase your rate limit to 5,000 requests per hour.
-
-### State Tracking
-The updater stores metadata regarding the current installed commit SHA or release tag in `.updater_state.json` inside each resource folder. If you wish to force an update regardless of state, delete `.updater_state.json` from the resource folder and run `/update <resourceName>`.
-
-### Private Repositories
-To update private GitHub repositories, set `githubToken` in `config.json` with a personal access token that has `repo` scope permissions for the target repositories.
-
----
-
-## License
-
-This project is licensed under the terms described in the [LICENSE](file:///d:/FiveM/Scripting/%5BLumaNode%5D/%5BAutoUpdater%5D/LNS_AutoUpdater/LICENSE) file.
