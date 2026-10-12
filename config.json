@@ -3,7 +3,7 @@
   "backupConfigs": true,
   "autoRestartResource": false,
   "adminAcePermission": "command.update",
-  "discordWebhook": "https://discord.com/api/webhooks/1559169181130162216/yNDQTsBuYRVlc1UkL594pVfIW5xKK-gJXcqpQ6UOI_J8F0zWZp8I5LeqeB-oHiwQU50W",
+  "discordWebhook": "",
   "managedScripts": [
     {
       "resourceName": "LNS_Housing",
