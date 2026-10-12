@@ -1,7 +1,3 @@
-/**
- * Discord Webhook notifier for sending rich embeds on script updates
- */
-
 const https = require('https');
 const url = require('url');
 
@@ -10,10 +6,6 @@ class DiscordNotifier {
         this.webhookUrl = webhookUrl;
     }
 
-    /**
-     * Send an embed to Discord.
-     * @param {Object} embedData 
-     */
     async sendEmbed({ title, description, color = 0x3498db, fields = [], footer = null }) {
         if (!this.webhookUrl || !this.webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
             return;
@@ -66,69 +58,60 @@ class DiscordNotifier {
         });
     }
 
-    /**
-     * Send update success notification.
-     */
     async notifyUpdateSuccess({ resourceName, repo, ref, message, author, updatedFilesCount, configStats }) {
         const fields = [
-            { name: '📦 Resource', value: `\`${resourceName}\``, inline: true },
-            { name: '🔗 GitHub Repo', value: `[${repo}](https://github.com/${repo})`, inline: true },
-            { name: '🔖 Commit / Ref', value: `\`${ref}\``, inline: true },
-            { name: '📝 Message', value: message || 'Latest update from repository', inline: false },
-            { name: '👤 Author', value: author || 'Unknown', inline: true },
-            { name: '📁 Files Updated', value: `${updatedFilesCount} files`, inline: true }
+            { name: 'Resource', value: `\`${resourceName}\``, inline: true },
+            { name: 'GitHub Repository', value: `[${repo}](https://github.com/${repo})`, inline: true },
+            { name: 'Commit / Ref', value: `\`${ref}\``, inline: true },
+            { name: 'Commit Message', value: message || 'Latest update from repository', inline: false },
+            { name: 'Author', value: author || 'Unknown', inline: true },
+            { name: 'Files Updated', value: `${updatedFilesCount} files`, inline: true }
         ];
 
         if (configStats) {
-            let configDetails = `🔒 **${configStats.preserved}** server settings preserved.\n`;
+            let configDetails = `Preserved settings: **${configStats.preserved}**\n`;
             if (configStats.added > 0) {
-                configDetails += `✨ **${configStats.added}** new settings injected: \`${configStats.addedKeys.slice(0, 5).join('`, `')}${configStats.addedKeys.length > 5 ? '... and more' : ''}\``;
+                configDetails += `New settings injected: **${configStats.added}** (\`${configStats.addedKeys.slice(0, 5).join('`, `')}${configStats.addedKeys.length > 5 ? '... and more' : ''}\`)`;
             } else {
-                configDetails += `✨ No new config keys introduced.`;
+                configDetails += `No new config keys required injection.`;
             }
             fields.push({
-                name: '⚙️ Smart Config Merge',
+                name: 'Configuration Merge',
                 value: configDetails,
                 inline: false
             });
         }
 
         return this.sendEmbed({
-            title: `✅ Script Updated: ${resourceName}`,
-            description: `Successfully pulled the latest update from GitHub and applied smart configuration preservation.`,
-            color: 0x2ecc71, // Green
+            title: `Script Updated: ${resourceName}`,
+            description: `Successfully pulled the latest update from GitHub and applied configuration preservation.`,
+            color: 0x2ecc71,
             fields
         });
     }
 
-    /**
-     * Send update available notification (when autoUpdate is false).
-     */
     async notifyUpdateAvailable({ resourceName, repo, ref, message }) {
         return this.sendEmbed({
-            title: `🔔 Update Available: ${resourceName}`,
-            description: `A new update is available on GitHub. Run \`/update ${resourceName}\` in console to apply it.`,
-            color: 0xf39c12, // Amber/Orange
+            title: `Update Available: ${resourceName}`,
+            description: `A new update is available on GitHub. Run \`/update ${resourceName}\` to apply it.`,
+            color: 0xf39c12,
             fields: [
-                { name: '📦 Resource', value: `\`${resourceName}\``, inline: true },
-                { name: '🔗 GitHub Repo', value: `[${repo}](https://github.com/${repo})`, inline: true },
-                { name: '🔖 New Ref', value: `\`${ref}\``, inline: true },
-                { name: '📝 Changes', value: message || 'No description provided', inline: false }
+                { name: 'Resource', value: `\`${resourceName}\``, inline: true },
+                { name: 'GitHub Repository', value: `[${repo}](https://github.com/${repo})`, inline: true },
+                { name: 'New Ref', value: `\`${ref}\``, inline: true },
+                { name: 'Changelog', value: message || 'No description provided', inline: false }
             ]
         });
     }
 
-    /**
-     * Send error notification.
-     */
     async notifyError({ resourceName, error }) {
         return this.sendEmbed({
-            title: `❌ Update Failed: ${resourceName}`,
+            title: `Update Failed: ${resourceName}`,
             description: `An error occurred while attempting to update the script.`,
-            color: 0xe74c3c, // Red
+            color: 0xe74c3c,
             fields: [
-                { name: '📦 Resource', value: `\`${resourceName}\``, inline: true },
-                { name: '⚠️ Error Details', value: `\`\`\`\n${error}\n\`\`\``, inline: false }
+                { name: 'Resource', value: `\`${resourceName}\``, inline: true },
+                { name: 'Error Details', value: `\`\`\`\n${error}\n\`\`\``, inline: false }
             ]
         });
     }

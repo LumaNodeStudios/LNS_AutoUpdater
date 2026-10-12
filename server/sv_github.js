@@ -1,8 +1,3 @@
-/**
- * GitHub API client for fetching repository metadata, releases, and zipball archives.
- * Pure Node.js https implementation without external dependencies.
- */
-
 const https = require('https');
 const url = require('url');
 
@@ -12,12 +7,6 @@ class GitHubClient {
         this.userAgent = 'FiveM-AutoUpdater-Resource';
     }
 
-    /**
-     * Helper to make HTTPS requests with redirect support and rate-limit detection.
-     * @param {string} requestUrl 
-     * @param {Object} options 
-     * @returns {Promise<{ statusCode: number, headers: Object, data: Buffer }>}
-     */
     request(requestUrl, options = {}) {
         return new Promise((resolve, reject) => {
             const parsedUrl = new url.URL(requestUrl);
@@ -28,7 +17,9 @@ class GitHubClient {
             };
 
             if (this.token) {
-                headers['Authorization'] = `token ${this.token}`;
+                headers['Authorization'] = this.token.startsWith('Bearer ') || this.token.startsWith('token ')
+                    ? this.token
+                    : `Bearer ${this.token}`;
             }
 
             const reqOptions = {
@@ -40,7 +31,6 @@ class GitHubClient {
             };
 
             const req = https.request(reqOptions, (res) => {
-                // Handle 301, 302, 307 redirects (common when downloading GitHub zipballs)
                 if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
                     return this.request(res.headers.location, options).then(resolve).catch(reject);
                 }
@@ -68,29 +58,28 @@ class GitHubClient {
         });
     }
 
-    /**
-     * Get the latest commit on a branch.
-     * @param {string} repo - 'owner/repo'
-     * @param {string} branch - e.g. 'main' or 'master'
-     */
+    handleHttpErrors(res, repoContext = '') {
+        if (res.statusCode === 403) {
+            const limit = res.headers && res.headers['x-ratelimit-remaining'];
+            if (limit === '0') {
+                const resetEpoch = parseInt(res.headers['x-ratelimit-reset'], 10);
+                const resetTime = !isNaN(resetEpoch) ? new Date(resetEpoch * 1000).toLocaleTimeString() : 'soon';
+                throw new Error(`GitHub API rate limit exceeded (resets at ${resetTime}). Add a "githubToken" to config.json for 5,000 requests/hr.`);
+            }
+            throw new Error(`GitHub API returned 403 Forbidden: ${res.data.toString('utf8')}`);
+        }
+        if (res.statusCode === 404) {
+            throw new Error(`Resource or repository not found: ${repoContext}. Check repo name, releases, or branch.`);
+        }
+        if (res.statusCode !== 200) {
+            throw new Error(`GitHub API error (${res.statusCode}): ${res.data.toString('utf8')}`);
+        }
+    }
+
     async getLatestCommit(repo, branch = 'main') {
         const endpoint = `https://api.github.com/repos/${repo}/commits/${branch}`;
         const res = await this.request(endpoint);
-
-        if (res.statusCode === 404) {
-            throw new Error(`Repository or branch not found: ${repo}@${branch}. Check repo name and permissions.`);
-        }
-        if (res.statusCode === 403) {
-            const limit = res.headers['x-ratelimit-remaining'];
-            if (limit === '0') {
-                const resetTime = new Date(parseInt(res.headers['x-ratelimit-reset']) * 1000).toLocaleTimeString();
-                throw new Error(`GitHub API rate limit exceeded. Resets at ${resetTime}. Provide a githubToken in config.json to increase rate limits.`);
-            }
-            throw new Error(`GitHub API returned 403 Forbidden: ${res.data.toString()}`);
-        }
-        if (res.statusCode !== 200) {
-            throw new Error(`GitHub API error (${res.statusCode}): ${res.data.toString()}`);
-        }
+        this.handleHttpErrors(res, `${repo}@${branch}`);
 
         const data = JSON.parse(res.data.toString('utf8'));
         return {
@@ -103,20 +92,10 @@ class GitHubClient {
         };
     }
 
-    /**
-     * Get the latest release from GitHub.
-     * @param {string} repo - 'owner/repo'
-     */
     async getLatestRelease(repo) {
         const endpoint = `https://api.github.com/repos/${repo}/releases/latest`;
         const res = await this.request(endpoint);
-
-        if (res.statusCode === 404) {
-            throw new Error(`No releases found for ${repo}. Consider tracking branch commits instead.`);
-        }
-        if (res.statusCode !== 200) {
-            throw new Error(`GitHub API release error (${res.statusCode}): ${res.data.toString()}`);
-        }
+        this.handleHttpErrors(res, repo);
 
         const data = JSON.parse(res.data.toString('utf8'));
         return {
@@ -129,22 +108,13 @@ class GitHubClient {
         };
     }
 
-    /**
-     * Download the repository zip archive for a given ref (branch, tag, or commit).
-     * @param {string} repo - 'owner/repo'
-     * @param {string} ref - branch name, commit sha, or tag
-     * @returns {Promise<Buffer>}
-     */
     async downloadZipball(repo, ref = 'main') {
         const endpoint = `https://api.github.com/repos/${repo}/zipball/${encodeURIComponent(ref)}`;
         const res = await this.request(endpoint, {
             accept: 'application/vnd.github.v3+json',
             timeout: 60000
         });
-
-        if (res.statusCode !== 200) {
-            throw new Error(`Failed to download zipball (${res.statusCode}): ${res.data.toString()}`);
-        }
+        this.handleHttpErrors(res, `${repo}@${ref}`);
 
         return res.data;
     }

@@ -1,20 +1,7 @@
-/**
- * Smart Config Merger for FiveM resources
- * Intelligently preserves existing server configurations while injecting new settings
- * introduced in upstream GitHub updates. Supports Lua and JSON configs.
- */
-
 const fs = require('fs');
 const path = require('path');
 
 class ConfigMerger {
-    /**
-     * Merge upstream content into local content.
-     * @param {string} filePath - Relative file path (e.g. 'config.lua')
-     * @param {string} localContent - Current server's configuration content
-     * @param {string} upstreamContent - Incoming update from GitHub
-     * @returns {{ mergedContent: string, stats: { preserved: number, added: number, addedKeys: string[] } }}
-     */
     static merge(filePath, localContent, upstreamContent) {
         const ext = path.extname(filePath).toLowerCase();
 
@@ -24,35 +11,25 @@ class ConfigMerger {
             return this.mergeLua(localContent, upstreamContent);
         }
 
-        // For non-config files or unknown extensions, do not merge
         return {
             mergedContent: upstreamContent,
             stats: { preserved: 0, added: 0, addedKeys: [] }
         };
     }
 
-    /**
-     * Smart Lua Config Merger
-     * Baseline is the local file (to preserve all admin edits, formatting, and custom logic).
-     * Missing keys and new options from upstream are identified and injected.
-     */
     static mergeLua(localContent, upstreamContent) {
         const stats = { preserved: 0, added: 0, addedKeys: [] };
 
-        // Parse assignments and tables from both files
         const localParsed = this.parseLuaConfig(localContent);
         const upstreamParsed = this.parseLuaConfig(upstreamContent);
 
         let merged = localContent;
         const injectedBlocks = [];
 
-        // Check each upstream assignment
         for (const [keyPath, upItem] of upstreamParsed.assignments.entries()) {
             if (localParsed.assignments.has(keyPath)) {
-                // Key exists in local! Preserve local value.
                 stats.preserved++;
 
-                // If both are tables, check if upstream introduced new subkeys
                 if (upItem.isTable && localParsed.assignments.get(keyPath).isTable) {
                     const localTableItem = localParsed.assignments.get(keyPath);
                     const newSubKeys = [];
@@ -74,14 +51,12 @@ class ConfigMerger {
                     }
                 }
             } else {
-                // Key does NOT exist in local file - this is a brand new configuration setting!
                 stats.added++;
                 stats.addedKeys.push(keyPath);
                 injectedBlocks.push(upItem.fullBlock);
             }
         }
 
-        // If new top-level or root Config keys were found, append them cleanly with header
         if (injectedBlocks.length > 0) {
             const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
             const injectionHeader = [
@@ -101,17 +76,12 @@ class ConfigMerger {
         return { mergedContent: merged, stats };
     }
 
-    /**
-     * Injects missing subkeys into an existing table definition in the Lua code.
-     */
     static injectSubKeysIntoTable(content, tableKeyPath, newSubKeys) {
-        // Regex to find table assignment: TablePath = { ... }
         const escapedKey = tableKeyPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const tableRegex = new RegExp(`(${escapedKey}\\s*=\\s*\\{)`, 'g');
         const match = tableRegex.exec(content);
 
         if (!match) {
-            // If table regex couldn't find exact location, append as explicit assignments: Table.Key = Value
             const assignments = newSubKeys.map(k => {
                 const comment = k.comment ? ` ${k.comment}` : '';
                 return `${tableKeyPath}['${k.subKey}'] = ${k.raw.trim()}${comment}`;
@@ -120,7 +90,6 @@ class ConfigMerger {
             return content.trimEnd() + '\n\n-- [AutoUpdater] New sub-settings added to ' + tableKeyPath + ':\n' + assignments + '\n';
         }
 
-        // Find closing brace of this table
         const startPos = match.index + match[0].length;
         let braceCount = 1;
         let closePos = -1;
@@ -156,7 +125,6 @@ class ConfigMerger {
             return content;
         }
 
-        // Prepare insertion snippet with indentation
         const linesToInsert = newSubKeys.map(k => {
             const comment = k.comment ? ` ${k.comment}` : '';
             return `    ['${k.subKey}'] = ${k.raw.trim()},${comment} -- [New setting from update]`;
@@ -184,9 +152,6 @@ class ConfigMerger {
         return beforeClose + '\n' + linesToInsert + '\n' + afterClose;
     }
 
-    /**
-     * Parses Lua configuration file into keypaths, values, and table hierarchies.
-     */
     static parseLuaConfig(luaCode) {
         const assignments = new Map();
         const lines = luaCode.split(/\r?\n/);
@@ -198,7 +163,6 @@ class ConfigMerger {
             const line = lines[i];
             const trimmed = line.trim();
 
-            // Track preceding comments for this block
             if (trimmed.startsWith('--')) {
                 currentComments.push(line);
                 i++;
@@ -206,7 +170,6 @@ class ConfigMerger {
             }
 
             if (trimmed === '') {
-                // If blank line, reset comments unless we're closely attached
                 if (currentComments.length > 5) {
                     currentComments = [];
                 }
@@ -214,17 +177,14 @@ class ConfigMerger {
                 continue;
             }
 
-            // Match assignment: Config.X = ... or Config['X'] = ...
             const assignmentMatch = trimmed.match(/^((?:Config|SETTINGS|Settings|Locale)(?:\.[a-zA-Z0-9_]+|\[['"][^'"]+['"]\])*)\s*=\s*(.*)$/);
 
             if (assignmentMatch) {
                 let rawKey = assignmentMatch[1];
                 let restOfLine = assignmentMatch[2];
 
-                // Normalize key: Config['item'] -> Config.item
                 const normalizedKey = rawKey.replace(/\[['"]([^'"]+)['"]\]/g, '.$1');
 
-                // Read entire value (could span multiple lines if table or function)
                 const fullValueResult = this.readFullLuaExpression(lines, i, restOfLine);
                 const assignmentStatement = `${rawKey} = ${fullValueResult.rawText}`;
                 const blockLines = [...currentComments, assignmentStatement];
@@ -247,7 +207,6 @@ class ConfigMerger {
                 continue;
             }
 
-            // Also match monolithic Config = { ... }
             const rootTableMatch = trimmed.match(/^(Config|SETTINGS|Settings)\s*=\s*\{/);
             if (rootTableMatch) {
                 const rootName = rootTableMatch[1];
@@ -282,9 +241,6 @@ class ConfigMerger {
         return { assignments };
     }
 
-    /**
-     * Reads a Lua expression that might span multiple lines (such as tables or functions).
-     */
     static readFullLuaExpression(lines, startLineIndex, firstLineContent) {
         let text = firstLineContent;
         let braceCount = 0;
@@ -294,13 +250,11 @@ class ConfigMerger {
         for (let i = startLineIndex; i < lines.length; i++) {
             const currentLine = i === startLineIndex ? firstLineContent : lines[i];
 
-            // Count opening & closing braces
             for (let c of currentLine) {
                 if (c === '{') braceCount++;
                 if (c === '}') braceCount--;
             }
 
-            // Track function ... end
             if (/\bfunction\s*\(/.test(currentLine)) {
                 inFunction = true;
                 functionEndCount++;
@@ -314,7 +268,6 @@ class ConfigMerger {
                 text += '\n' + lines[i];
             }
 
-            // Check if complete
             if (braceCount <= 0 && !inFunction) {
                 return {
                     rawText: text,
@@ -329,9 +282,6 @@ class ConfigMerger {
         };
     }
 
-    /**
-     * Extract key-value pairs from inside a Lua table string `{ ... }`
-     */
     static extractTableSubKeys(tableString) {
         const subKeys = new Map();
         const inner = tableString.replace(/^\{/, '').replace(/\}$/, '');
@@ -345,13 +295,11 @@ class ConfigMerger {
                 continue;
             }
 
-            // Match key = value or ['key'] = value
             const match = trimmed.match(/^(?:\[['"]([^'"]+)['"]\]|([a-zA-Z0-9_]+))\s*=\s*(.*)$/);
             if (match) {
                 const key = match[1] || match[2];
                 let valuePart = match[3];
 
-                // Remove trailing comma or inline comment if present
                 let comment = pendingComment;
                 const commentIdx = valuePart.indexOf('--');
                 if (commentIdx !== -1) {
@@ -375,9 +323,6 @@ class ConfigMerger {
         return subKeys;
     }
 
-    /**
-     * Deep merge for JSON configurations
-     */
     static mergeJson(localJsonStr, upstreamJsonStr) {
         const stats = { preserved: 0, added: 0, addedKeys: [] };
 
@@ -393,7 +338,6 @@ class ConfigMerger {
             for (const [key, sourceVal] of Object.entries(source)) {
                 const fullPath = currentPath ? `${currentPath}.${key}` : key;
                 if (!(key in target)) {
-                    // New key from upstream
                     target[key] = sourceVal;
                     stats.added++;
                     stats.addedKeys.push(fullPath);
@@ -403,7 +347,6 @@ class ConfigMerger {
                 ) {
                     deepMerge(target[key], sourceVal, fullPath);
                 } else {
-                    // Preserved local custom value
                     stats.preserved++;
                 }
             }
@@ -417,9 +360,6 @@ class ConfigMerger {
         };
     }
 
-    /**
-     * Creates a timestamped backup of the target file before modifying it.
-     */
     static createBackup(filePath) {
         if (!fs.existsSync(filePath)) return null;
 

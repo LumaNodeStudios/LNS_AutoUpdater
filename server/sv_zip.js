@@ -1,26 +1,12 @@
-/**
- * Zero-dependency ZIP file reader and unpacker for Node.js
- * Uses Node's built-in zlib module to decompress Deflate (method 8) and Stored (method 0) files.
- * Works seamlessly in FXServer Node.js runtime and standalone Node.js environments.
- */
-
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
 class ZipExtractor {
-    /**
-     * Parse a zip buffer and return a list of extracted file entries.
-     * @param {Buffer} buffer 
-     * @param {Object} options 
-     * @returns {Array<{ path: string, isDirectory: boolean, data: Buffer }>}
-     */
     static parse(buffer, options = {}) {
-        const stripRoot = options.stripRoot !== false; // Default true (strips github's 'repo-commit/' root)
+        const stripRoot = options.stripRoot !== false;
         const subfolder = (options.subfolder || '').replace(/^[\\/]+|[\\/]+$/g, '').toLowerCase();
 
-        // 1. Find End of Central Directory Record (EOCD)
-        // EOCD signature is 0x06054b50 ("PK\x05\x06")
         let eocdOffset = -1;
         for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65557); i--) {
             if (buffer.readUInt32LE(i) === 0x06054b50) {
@@ -42,7 +28,6 @@ class ZipExtractor {
 
         for (let i = 0; i < totalEntries; i++) {
             if (buffer.readUInt32LE(currentCdOffset) !== 0x02014b50) {
-                // Not a central directory header
                 break;
             }
 
@@ -69,7 +54,6 @@ class ZipExtractor {
             });
         }
 
-        // Determine if there is a common top-level root folder (like GitHub's "repo-name-commit/")
         let commonRoot = '';
         if (stripRoot && rawEntries.length > 0) {
             const firstSlashIndex = rawEntries[0].filename.indexOf('/');
@@ -92,7 +76,6 @@ class ZipExtractor {
 
             if (!relativePath || relativePath === '/') continue;
 
-            // Check subfolder filtering if specified
             if (subfolder) {
                 const lowerRel = relativePath.toLowerCase();
                 if (!lowerRel.startsWith(subfolder + '/') && lowerRel !== subfolder) {
@@ -111,7 +94,6 @@ class ZipExtractor {
                 continue;
             }
 
-            // Extract file content from local header
             if (buffer.readUInt32LE(entry.localHeaderOffset) !== 0x04034b50) {
                 throw new Error(`Invalid local header signature for file: ${entry.filename}`);
             }
@@ -124,10 +106,8 @@ class ZipExtractor {
             let uncompressedData;
 
             if (entry.method === 0) {
-                // Stored (no compression)
                 uncompressedData = Buffer.from(compressedData);
             } else if (entry.method === 8) {
-                // Deflated
                 uncompressedData = zlib.inflateRawSync(compressedData);
             } else {
                 console.warn(`[AutoUpdater:Zip] Unsupported compression method (${entry.method}) for file: ${entry.filename}`);
@@ -144,12 +124,6 @@ class ZipExtractor {
         return extractedFiles;
     }
 
-    /**
-     * Extract zip buffer directly to target directory on disk
-     * @param {Buffer} buffer 
-     * @param {string} destinationDir 
-     * @param {Object} options 
-     */
     static extractToDir(buffer, destinationDir, options = {}) {
         const files = this.parse(buffer, options);
         for (const file of files) {

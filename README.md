@@ -2,7 +2,7 @@
 
 Automated GitHub resource updater for FiveM servers with smart configuration preservation, Discord notifications, automated backups, and standalone CLI support.
 
-Developed by LumaNode Studios.
+Developed by **[LumaNode Studios](https://github.com/LumaNodeStudios)**.
 
 ---
 
@@ -12,7 +12,12 @@ Developed by LumaNode Studios.
 - [Key Features](#key-features)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [GitHub Token & Rate Limits](#github-token--rate-limits)
+  - [Why You Need a Token](#why-you-need-a-token)
+  - [Generating a Personal Access Token](#generating-a-personal-access-token)
+  - [Configuring the Token](#configuring-the-token)
 - [Permissions (ACE)](#permissions-ace)
+- [Filesystem Permissions (server.cfg)](#filesystem-permissions-servercfg)
 - [Configuration Guide](#configuration-guide)
   - [Root Configuration](#root-configuration)
   - [Managed Resource Configuration](#managed-resource-configuration)
@@ -65,12 +70,69 @@ It operates seamlessly as both an active FiveM server resource and a standalone 
    ```
 2. Verify that the folder name is `LNS_AutoUpdater`.
 3. Open `config.json` inside the `LNS_AutoUpdater` directory and configure your managed resources and settings.
-4. Add the resource to your `server.cfg`:
+4. *(Recommended)* Add a GitHub Token to avoid API rate limits (see [GitHub Token & Rate Limits](#github-token--rate-limits)).
+5. Add the resource to your `server.cfg`:
    ```cfg
    ensure LNS_AutoUpdater
    ```
-5. Configure ACE permissions in `server.cfg` (see [Permissions (ACE)](#permissions-ace)).
-6. Start or restart your FXServer.
+6. Configure ACE permissions in `server.cfg` (see [Permissions (ACE)](#permissions-ace)).
+7. Start or restart your FXServer.
+
+---
+
+## GitHub Token & Rate Limits
+
+### Why You Need a Token
+
+By default, GitHub restricts unauthenticated API requests to **60 requests per hour per IP address**. 
+
+On dedicated FiveM servers or development environments where multiple resources are checked or restarted frequently, this 60 request/hour limit is quickly exhausted, resulting in HTTP 403 `API rate limit exceeded` errors:
+
+```text
+✖ Error checking LNS_Housing: GitHub API rate limit exceeded (resets at 11:45:00 PM). Add a "githubToken" to config.json for 5,000 requests/hr.
+```
+
+Adding a **GitHub Personal Access Token (PAT)**:
+- Increases your server's rate limit from **60 to 5,000 requests per hour**.
+- Enables updating from **private GitHub repositories**.
+- Is completely free and takes less than a minute to create.
+
+---
+
+### Generating a Personal Access Token
+
+1. Log into your GitHub account and navigate to:  
+   **[GitHub Settings → Developer Settings → Personal Access Tokens → Tokens (classic)](https://github.com/settings/tokens)**
+2. Click **Generate new token** (choose **Generate new token (classic)**).
+3. Fill in the token details:
+   - **Note**: Give it a clear name (e.g., `FiveM Server AutoUpdater`).
+   - **Expiration**: Select a duration (e.g., `90 days`, `1 year`, or `No expiration` for dedicated servers).
+   - **Select scopes**:
+     - **For Public Repositories Only**: **No scopes are required!** Leave all checkboxes blank.
+     - **For Private Repositories**: Check the **`repo`** scope (Full control of private repositories).
+4. Scroll to the bottom and click **Generate token**.
+5. **Copy the token immediately** (it starts with `ghp_`). GitHub will not show it to you again.
+
+---
+
+### Configuring the Token
+
+Open your `config.json` file and paste the token into the `"githubToken"` field:
+
+```json
+{
+  "checkIntervalMinutes": 60,
+  "githubToken": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "backupConfigs": true,
+  "autoRestartResource": false,
+  "adminAcePermission": "command.update",
+  "discordWebhook": null,
+  "managedScripts": [ ... ]
+}
+```
+
+> [!TIP]
+> Both classic tokens (`ghp_...`) and fine-grained personal access tokens (`github_pat_...`) are supported.
 
 ---
 
@@ -95,6 +157,36 @@ If you wish to change the permission node, modify `"adminAcePermission"` in `con
 
 ---
 
+## Filesystem Permissions (`server.cfg`)
+
+Modern FiveM server artifacts enforce a security sandbox in the Node.js runtime (`c-scripting-node`). By default, resources are prevented from modifying or writing files into another resource's directory unless explicitly authorized by the server administrator.
+
+If filesystem permissions are not granted, the server console will output:
+```text
+[ c-scripting-node] Filesystem write permission check from 'LNS_AutoUpdater' for permission fs.write on resource '...' - write not allowed
+Error: Access to this API has been restricted.
+```
+
+### Granting Write Permissions
+
+Add an `add_filesystem_permission` line for each managed resource into your **`server.cfg`** before starting the resources:
+
+```cfg
+# Grant LNS_AutoUpdater permission to write updates into target resource directories
+add_filesystem_permission LNS_AutoUpdater write LNS_Housing
+add_filesystem_permission LNS_AutoUpdater write LNS_Fuel
+
+# Start the resources
+ensure LNS_AutoUpdater
+ensure LNS_Housing
+ensure LNS_Fuel
+```
+
+> [!NOTE]
+> Add an `add_filesystem_permission LNS_AutoUpdater write <resourceName>` line for every script configured in your `managedScripts` list. Wildcards (like `*`) are not supported by FiveM's sandbox.
+
+---
+
 ## Configuration Guide
 
 The configuration file is located at `config.json` in the root of the resource.
@@ -104,11 +196,11 @@ The configuration file is located at `config.json` in the root of the resource.
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `checkIntervalMinutes` | number | `60` | Interval in minutes between automated GitHub checks. Set to `0` to disable periodic checks. |
+| `githubToken` | string \| null | `null` | GitHub Personal Access Token. Increases rate limits from 60 to 5,000 req/hr and enables private repo access. |
 | `backupConfigs` | boolean | `true` | When `true`, saves timestamped copies of existing config files before merging updates. |
 | `autoRestartResource` | boolean | `false` | When `true`, automatically executes `restart <resourceName>` in FXServer after an update succeeds. |
 | `adminAcePermission` | string | `"command.update"` | The ACE permission node required to use updater commands in-game. |
 | `discordWebhook` | string \| null | `null` | Discord webhook URL for update notices. Set to `null` or leave empty to disable. |
-| `githubToken` | string \| null | `null` | Optional GitHub Personal Access Token. Increases API rate limits from 60 to 5,000 requests per hour. |
 | `managedScripts` | array | `[]` | List of resources to manage and monitor. |
 
 ### Managed Resource Configuration
@@ -131,11 +223,11 @@ Each entry in the `managedScripts` array represents a resource:
 ```json
 {
   "checkIntervalMinutes": 60,
+  "githubToken": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "backupConfigs": true,
   "autoRestartResource": false,
   "adminAcePermission": "command.update",
   "discordWebhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL",
-  "githubToken": null,
   "managedScripts": [
     {
       "resourceName": "LNS_Housing",
@@ -302,3 +394,22 @@ If a GitHub repository contains multiple FiveM resources or stores the resource 
 ```
 
 The updater extracts only the contents of the specified subfolder directly into the target resource directory.
+
+---
+
+## Troubleshooting & FAQ
+
+#### Q: I get `GitHub API rate limit exceeded (403)` when checking updates.
+**A:** GitHub limits unauthenticated API calls to 60/hr per IP address. Follow the [GitHub Token & Rate Limits](#github-token--rate-limits) guide to create a free GitHub Personal Access Token and add it to `"githubToken"` in your `config.json`. This raises your limit to 5,000/hr.
+
+#### Q: Will my custom settings, webhook links, or coordinates be overwritten?
+**A:** No. Files specified under `configFiles` pass through the Smart Config Merger. Local values take priority over upstream values; only newly added configuration options are injected.
+
+#### Q: Where are backups stored?
+**A:** Backups are stored in `.updater_backups/` inside the updated resource's folder with ISO timestamps.
+
+---
+
+## License
+
+This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) file for details.

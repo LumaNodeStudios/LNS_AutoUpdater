@@ -1,7 +1,3 @@
-/**
- * Utilities for logging, path resolution, pattern matching, and state persistence.
- */
-
 const fs = require('fs');
 const path = require('path');
 
@@ -41,25 +37,15 @@ class Logger {
 }
 
 class PathHelper {
-    /**
-     * Resolves the root filesystem path of a resource.
-     * In FXServer, calls GetResourcePath(resourceName).
-     * If running standalone/testing, resolves relative to current working directory.
-     */
     static getResourceRoot(resourceName) {
         if (typeof GetResourcePath === 'function') {
             const fxPath = GetResourcePath(resourceName);
             if (fxPath) return path.resolve(fxPath);
         }
 
-        // Standalone fallback
         return path.resolve(process.cwd(), '..', resourceName);
     }
 
-    /**
-     * Checks if a relative file path matches an ignore pattern list.
-     * Supports basic wildcards like '*.md', '.git*', '.github/*'
-     */
     static shouldIgnore(relPath, ignorePatterns = []) {
         const normalized = relPath.replace(/\\/g, '/');
         const filename = path.basename(normalized);
@@ -84,9 +70,6 @@ class PathHelper {
         return false;
     }
 
-    /**
-     * Checks if a file path is marked as a configuration file.
-     */
     static isConfigFile(relPath, configFilesList = []) {
         const normalized = relPath.replace(/\\/g, '/').toLowerCase();
         for (const cfg of configFilesList) {
@@ -95,7 +78,6 @@ class PathHelper {
                 return true;
             }
         }
-        // Default heuristics if list empty
         if (configFilesList.length === 0) {
             const base = path.basename(normalized);
             return base === 'config.lua' || base === 'settings.lua' || base === 'config.json';
@@ -105,9 +87,6 @@ class PathHelper {
 }
 
 class StateManager {
-    /**
-     * Loads the stored state for a resource (contains last commit sha, last update timestamp).
-     */
     static loadResourceState(resourceDir) {
         const stateFile = path.join(resourceDir, '.updater_state.json');
         if (fs.existsSync(stateFile)) {
@@ -120,9 +99,6 @@ class StateManager {
         return {};
     }
 
-    /**
-     * Saves the updated state for a resource.
-     */
     static saveResourceState(resourceDir, stateData) {
         const stateFile = path.join(resourceDir, '.updater_state.json');
         try {

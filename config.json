@@ -1,9 +1,10 @@
 {
   "checkIntervalMinutes": 60,
+  "githubToken": "",
   "backupConfigs": true,
   "autoRestartResource": false,
   "adminAcePermission": "command.update",
-  "discordWebhook": "",
+  "discordWebhook": null,
   "managedScripts": [
     {
       "resourceName": "LNS_Housing",

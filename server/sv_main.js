@@ -5,18 +5,47 @@
 
 const fs = require('fs');
 const path = require('path');
-const GitHubClient = require('./sv_github');
-const ZipExtractor = require('./sv_zip');
-const ConfigMerger = require('./sv_merger');
-const DiscordNotifier = require('./sv_discord');
-const { Colors, Logger, PathHelper, StateManager } = require('./sv_utils');
-
 // Check if running inside FXServer environment
 const isFXServer = typeof GetCurrentResourceName === 'function';
 
-// Resolve configuration path
-const resourceDir = isFXServer ? GetResourcePath(GetCurrentResourceName()) : path.resolve(__dirname, '..');
+// Resolve configuration and server paths
+const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+const resourceDir = isFXServer ? GetResourcePath(GetCurrentResourceName()) : path.resolve(currentDir, '..');
 const configPath = path.join(resourceDir, 'config.json');
+
+/**
+ * Resolves local server modules reliably in both FXServer (dummy.js entry) and standalone Node environments.
+ * @param {string} moduleName
+ */
+function requireServerModule(moduleName) {
+    if (isFXServer) {
+        const fullPath = path.join(resourceDir, 'server', moduleName);
+        if (fs.existsSync(fullPath + '.js') || fs.existsSync(fullPath)) {
+            return require(fullPath);
+        }
+        return require(`./server/${moduleName}`);
+    }
+
+    const candidatePaths = [
+        path.join(currentDir, moduleName),
+        path.join(currentDir, 'server', moduleName),
+        `./${moduleName}`,
+        `./server/${moduleName}`
+    ];
+
+    for (const cand of candidatePaths) {
+        if (fs.existsSync(cand + '.js') || fs.existsSync(cand)) {
+            return require(cand);
+        }
+    }
+    return require(`./${moduleName}`);
+}
+
+const GitHubClient = requireServerModule('sv_github');
+const ZipExtractor = requireServerModule('sv_zip');
+const ConfigMerger = requireServerModule('sv_merger');
+const DiscordNotifier = requireServerModule('sv_discord');
+const { Colors, Logger, PathHelper, StateManager } = requireServerModule('sv_utils');
 
 let config = {
     checkIntervalMinutes: 60,
@@ -120,8 +149,14 @@ class AutoUpdaterCore {
             subfolder: scriptConfig.subfolder || ''
         });
 
-        const ignoreList = scriptConfig.ignoreFiles || ['.git*', '.github/*', 'README.md', 'LICENSE', '.gitignore'];
-        const configList = scriptConfig.configFiles || ['config.lua', 'settings.lua', 'config.json'];
+        const defaultIgnores = ['.git*', '.github/*', 'README.md', 'LICENSE', '.gitignore'];
+        const customIgnores = (Array.isArray(scriptConfig.ignoreFiles) && scriptConfig.ignoreFiles.length > 0)
+            ? scriptConfig.ignoreFiles
+            : [];
+        const ignoreList = [...new Set([...defaultIgnores, ...customIgnores])];
+        const configList = (Array.isArray(scriptConfig.configFiles) && scriptConfig.configFiles.length > 0)
+            ? scriptConfig.configFiles
+            : ['config.lua', 'settings.lua', 'config.json'];
 
         let updatedFilesCount = 0;
         let totalConfigStats = { preserved: 0, added: 0, addedKeys: [] };
@@ -387,20 +422,30 @@ if (isFXServer) {
     });
 
     // FiveM Exports
-    exports('CheckForUpdates', (resourceName) => {
-        const script = config.managedScripts.find(s => s.resourceName.toLowerCase() === (resourceName || '').toLowerCase());
-        if (!script) return Promise.reject(new Error('Resource not managed'));
-        return AutoUpdaterCore.checkForUpdate(script);
-    });
+    const cfxExports = (typeof globalThis !== 'undefined' && typeof globalThis.exports === 'function')
+        ? globalThis.exports
+        : (typeof global !== 'undefined' && typeof global.exports === 'function')
+            ? global.exports
+            : (typeof exports === 'function' ? exports : null);
 
-    exports('UpdateResource', (resourceName) => {
-        const script = config.managedScripts.find(s => s.resourceName.toLowerCase() === (resourceName || '').toLowerCase());
-        if (!script) return Promise.reject(new Error('Resource not managed'));
-        return AutoUpdaterCore.updateResource(script);
-    });
+    if (cfxExports) {
+        cfxExports('CheckForUpdates', (resourceName) => {
+            const script = config.managedScripts.find(s => s.resourceName.toLowerCase() === (resourceName || '').toLowerCase());
+            if (!script) return Promise.reject(new Error('Resource not managed'));
+            return AutoUpdaterCore.checkForUpdate(script);
+        });
+
+        cfxExports('UpdateResource', (resourceName) => {
+            const script = config.managedScripts.find(s => s.resourceName.toLowerCase() === (resourceName || '').toLowerCase());
+            if (!script) return Promise.reject(new Error('Resource not managed'));
+            return AutoUpdaterCore.updateResource(script);
+        });
+    }
 }
 
-module.exports = {
-    AutoUpdaterCore,
-    config
-};
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        AutoUpdaterCore,
+        config
+    };
+}
