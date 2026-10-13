@@ -12,15 +12,15 @@ class DiscordNotifier {
         }
 
         const payload = {
-            username: 'FiveM AutoUpdater',
-            avatar_url: 'https://i.imgur.com/4M34hi2.png',
+            username: 'LumaNode AutoUpdater',
+            avatar_url: 'https://r2.fivemanage.com/ikenZGXRwE4faTVyko8MZ/LumaNode_Original.png',
             embeds: [
                 {
                     title,
                     description,
                     color,
                     fields,
-                    footer: footer || { text: 'FiveM Smart AutoUpdater' },
+                    footer: footer || { text: 'LumaNode AutoUpdater' },
                     timestamp: new Date().toISOString()
                 }
             ]

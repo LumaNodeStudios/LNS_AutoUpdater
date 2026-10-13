@@ -1,22 +1,10 @@
-/**
- * FiveM AutoUpdater Core Server Script
- * Manages GitHub updates, smart configuration merging, commands, and webhooks.
- */
-
 const fs = require('fs');
 const path = require('path');
-// Check if running inside FXServer environment
 const isFXServer = typeof GetCurrentResourceName === 'function';
-
-// Resolve configuration and server paths
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 const resourceDir = isFXServer ? GetResourcePath(GetCurrentResourceName()) : path.resolve(currentDir, '..');
 const configPath = path.join(resourceDir, 'config.json');
 
-/**
- * Resolves local server modules reliably in both FXServer (dummy.js entry) and standalone Node environments.
- * @param {string} moduleName
- */
 function requireServerModule(moduleName) {
     if (isFXServer) {
         const fullPath = path.join(resourceDir, 'server', moduleName);
@@ -57,7 +45,6 @@ let config = {
     managedScripts: []
 };
 
-// Load user configuration
 if (fs.existsSync(configPath)) {
     try {
         const loadedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -73,11 +60,6 @@ const github = new GitHubClient(config.githubToken || null);
 const discord = new DiscordNotifier(config.discordWebhook || null);
 
 class AutoUpdaterCore {
-    /**
-     * Check a specific resource for pending GitHub updates.
-     * @param {Object} scriptConfig 
-     * @returns {Promise<{ hasUpdate: boolean, latestInfo: Object, currentSha: string }>}
-     */
     static async checkForUpdate(scriptConfig) {
         const resourceName = scriptConfig.resourceName;
         const targetDir = PathHelper.getResourceRoot(resourceName);
@@ -125,26 +107,19 @@ class AutoUpdaterCore {
         }
     }
 
-    /**
-     * Downloads, merges configurations, and updates the resource on disk.
-     * @param {Object} scriptConfig 
-     */
     static async updateResource(scriptConfig) {
         const resourceName = scriptConfig.resourceName;
         const targetDir = PathHelper.getResourceRoot(resourceName);
 
         Logger.info(`Starting update for resource ${Colors.Cyan}${resourceName}${Colors.Reset} from ${scriptConfig.githubRepo}...`);
 
-        // 1. Fetch latest metadata
         const updateCheck = await this.checkForUpdate(scriptConfig);
         const latestInfo = updateCheck.latestInfo;
         const refToDownload = latestInfo.ref;
 
-        // 2. Download repository archive
         Logger.info(`Downloading zipball from GitHub (${refToDownload})...`);
         const zipBuffer = await github.downloadZipball(scriptConfig.githubRepo, refToDownload);
 
-        // 3. Extract files into memory
         const extractedFiles = ZipExtractor.parse(zipBuffer, {
             subfolder: scriptConfig.subfolder || ''
         });
@@ -161,7 +136,6 @@ class AutoUpdaterCore {
         let updatedFilesCount = 0;
         let totalConfigStats = { preserved: 0, added: 0, addedKeys: [] };
 
-        // 4. Process and write files
         for (const file of extractedFiles) {
             if (PathHelper.shouldIgnore(file.path, ignoreList)) {
                 continue;
@@ -176,7 +150,6 @@ class AutoUpdaterCore {
                 continue;
             }
 
-            // Ensure parent folder exists
             const parentDir = path.dirname(destinationPath);
             if (!fs.existsSync(parentDir)) {
                 fs.mkdirSync(parentDir, { recursive: true });
@@ -185,7 +158,6 @@ class AutoUpdaterCore {
             const isConfig = PathHelper.isConfigFile(file.path, configList);
 
             if (isConfig && fs.existsSync(destinationPath)) {
-                // Config file exists! Run Smart Config Merger
                 Logger.info(`Smart-merging configuration: ${Colors.Yellow}${file.path}${Colors.Reset}...`);
 
                 if (config.backupConfigs) {
@@ -207,14 +179,33 @@ class AutoUpdaterCore {
 
                 Logger.success(`Config merged: Preserved ${mergeResult.stats.preserved} settings, injected ${mergeResult.stats.added} new settings.`);
             } else {
-                // Non-config file or new file: write directly
                 fs.writeFileSync(destinationPath, file.data);
             }
 
             updatedFilesCount++;
         }
 
-        // 5. Update state tracker
+        const manifestPath = path.join(targetDir, 'fxmanifest.lua');
+        if (fs.existsSync(manifestPath) && latestInfo.type === 'release' && latestInfo.ref) {
+            const rawVersion = latestInfo.ref.replace(/^v/i, '').trim();
+            if (rawVersion) {
+                try {
+                    let manifestContent = fs.readFileSync(manifestPath, 'utf8');
+                    const versionRegex = /(version\s+['"])([^'"]+)(['"])/i;
+                    if (versionRegex.test(manifestContent)) {
+                        const currentManifestVersion = manifestContent.match(versionRegex)[2];
+                        if (currentManifestVersion !== rawVersion) {
+                            manifestContent = manifestContent.replace(versionRegex, `$1${rawVersion}$3`);
+                            fs.writeFileSync(manifestPath, manifestContent, 'utf8');
+                            Logger.success(`Updated ${Colors.Cyan}${resourceName}${Colors.Reset} fxmanifest.lua version: ${Colors.Yellow}${currentManifestVersion}${Colors.Reset} -> ${Colors.Green}${rawVersion}${Colors.Reset}`);
+                        }
+                    }
+                } catch (err) {
+                    Logger.warn(`Could not sync fxmanifest.lua version: ${err.message}`);
+                }
+            }
+        }
+
         StateManager.saveResourceState(targetDir, {
             repo: scriptConfig.githubRepo,
             ref: latestInfo.ref,
@@ -226,13 +217,11 @@ class AutoUpdaterCore {
 
         Logger.success(`Update complete for ${Colors.Green}${resourceName}${Colors.Reset}! (${updatedFilesCount} files updated)`);
 
-        // 6. Restart resource in FXServer if enabled
         if (config.autoRestartResource && isFXServer) {
             Logger.info(`Restarting resource ${resourceName} via FXServer command...`);
             ExecuteCommand(`restart ${resourceName}`);
         }
 
-        // 7. Send Discord Notification
         await discord.notifyUpdateSuccess({
             resourceName,
             repo: scriptConfig.githubRepo,
@@ -251,9 +240,6 @@ class AutoUpdaterCore {
         };
     }
 
-    /**
-     * Check all configured resources.
-     */
     static async checkAll(silentIfUpToDate = false) {
         Logger.info(`Checking updates for ${config.managedScripts.length} managed script(s)...`);
         const updatesAvailable = [];
@@ -264,7 +250,7 @@ class AutoUpdaterCore {
                 if (check.hasUpdate) {
                     updatesAvailable.push({ script, check });
                     Logger.warn(`Update available for ${Colors.Yellow}${script.resourceName}${Colors.Reset} (${check.currentRef} -> ${check.latestInfo.shortRef || check.latestInfo.ref}): ${check.latestInfo.message}`);
-                    
+
                     if (script.autoUpdate) {
                         Logger.info(`Auto-update is enabled for ${script.resourceName}. Starting auto-update...`);
                         await this.updateResource(script);
@@ -289,12 +275,8 @@ class AutoUpdaterCore {
     }
 }
 
-// -----------------------------------------------------------------------------
-// FXServer Commands and Lifecycle
-// -----------------------------------------------------------------------------
-
 function hasPermission(source) {
-    if (source === 0) return true; // Server console is always authorized
+    if (source === 0) return true;
     if (typeof IsPlayerAceAllowed === 'function') {
         return IsPlayerAceAllowed(source, config.adminAcePermission || 'command.update');
     }
@@ -314,7 +296,6 @@ function sendFeedback(source, message) {
 }
 
 if (isFXServer) {
-    // /checkupdates command
     RegisterCommand('checkupdates', async (source, args) => {
         if (!hasPermission(source)) {
             sendFeedback(source, '^1Access denied. You do not have permission to check updates.');
@@ -347,7 +328,6 @@ if (isFXServer) {
         }
     }, false);
 
-    // /update command
     RegisterCommand('update', async (source, args) => {
         if (!hasPermission(source)) {
             sendFeedback(source, '^1Access denied. You do not have permission to update scripts.');
@@ -377,7 +357,6 @@ if (isFXServer) {
         }
     }, false);
 
-    // /updateall command
     RegisterCommand('updateall', async (source) => {
         if (!hasPermission(source)) {
             sendFeedback(source, '^1Access denied.');
@@ -403,15 +382,12 @@ if (isFXServer) {
         sendFeedback(source, `^2Update cycle complete. ${updatedCount} resource(s) updated.`);
     }, false);
 
-    // Startup banner & initial check
     setImmediate(() => {
         Logger.info(`${Colors.Bright}FiveM Smart AutoUpdater initialized!${Colors.Reset}`);
         Logger.info(`Tracking ${config.managedScripts.length} managed script(s). Smart Config Preservation active.`);
 
-        // Initial check on boot
         AutoUpdaterCore.checkAll(true).catch(e => Logger.error('Boot check error:', e.message));
 
-        // Setup periodic check interval
         if (config.checkIntervalMinutes > 0) {
             const ms = config.checkIntervalMinutes * 60 * 1000;
             setInterval(() => {
@@ -421,7 +397,6 @@ if (isFXServer) {
         }
     });
 
-    // FiveM Exports
     const cfxExports = (typeof globalThis !== 'undefined' && typeof globalThis.exports === 'function')
         ? globalThis.exports
         : (typeof global !== 'undefined' && typeof global.exports === 'function')

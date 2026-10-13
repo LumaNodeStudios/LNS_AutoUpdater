@@ -17,9 +17,213 @@ class ConfigMerger {
         };
     }
 
-    static mergeLua(localContent, upstreamContent) {
+    static parseLuaTable(str) {
+        const openIdx = str.indexOf('{');
+        const closeIdx = str.lastIndexOf('}');
+        if (openIdx === -1 || closeIdx === -1) return null;
+
+        const inner = str.substring(openIdx + 1, closeIdx);
+        const lines = inner.split(/\r?\n/);
+        const entries = new Map();
+
+        let currentComments = [];
+        let i = 0;
+
+        while (i < lines.length) {
+            const line = lines[i];
+            const trimmed = line.trim();
+
+            if (trimmed.startsWith('--')) {
+                currentComments.push(line);
+                i++;
+                continue;
+            }
+
+            if (trimmed === '') {
+                if (currentComments.length > 5) currentComments = [];
+                i++;
+                continue;
+            }
+
+            const match = trimmed.match(/^(?:\[['"]([^'"]+)['"]\]|([a-zA-Z0-9_]+))\s*=\s*(.*)$/);
+            if (match) {
+                const key = match[1] || match[2];
+                let valueRest = match[3];
+
+                let rawLines = [line];
+                let isTable = valueRest.trim().startsWith('{');
+                let braceCount = 0;
+                let bracketCount = 0;
+
+                for (const ch of valueRest) {
+                    if (ch === '{') braceCount++;
+                    if (ch === '}') braceCount--;
+                    if (ch === '[') bracketCount++;
+                    if (ch === ']') bracketCount--;
+                }
+
+                let endIdx = i;
+                while (braceCount > 0 && endIdx + 1 < lines.length) {
+                    endIdx++;
+                    const nextLine = lines[endIdx];
+                    rawLines.push(nextLine);
+                    for (const ch of nextLine) {
+                        if (ch === '{') braceCount++;
+                        if (ch === '}') braceCount--;
+                    }
+                }
+
+                const rawText = rawLines.join('\n');
+                const block = [...currentComments, rawText].join('\n');
+
+                let subTable = null;
+                if (isTable) {
+                    const subOpen = rawText.indexOf('{');
+                    subTable = this.parseLuaTable(rawText.substring(subOpen));
+                }
+
+                entries.set(key, {
+                    key,
+                    rawText,
+                    block,
+                    isTable,
+                    subTable,
+                    comments: currentComments.slice()
+                });
+
+                i = endIdx + 1;
+                currentComments = [];
+                continue;
+            }
+
+            currentComments = [];
+            i++;
+        }
+
+        return { entries, openIdx, closeIdx };
+    }
+
+    static findTableClosePosition(content, tableKeyPath) {
+        if (!tableKeyPath) return content.lastIndexOf('}');
+
+        const keys = tableKeyPath.split('.');
+        let searchStart = 0;
+
+        for (let k = 0; k < keys.length; k++) {
+            const key = keys[k];
+            const sub = content.substring(searchStart);
+            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`(?:\\[['"]${escapedKey}['"]\\]|\\b${escapedKey}\\b)\\s*=\\s*\\{`);
+            const match = pattern.exec(sub);
+            if (!match) return -1;
+
+            const tableOpenIdx = searchStart + match.index + match[0].length;
+            let braceCount = 1;
+            let closeIdx = -1;
+
+            for (let i = tableOpenIdx; i < content.length; i++) {
+                const c = content[i];
+                if (c === '{') braceCount++;
+                else if (c === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                        closeIdx = i;
+                        break;
+                    }
+                }
+            }
+
+            if (closeIdx === -1) return -1;
+
+            if (k === keys.length - 1) {
+                return closeIdx;
+            } else {
+                searchStart = tableOpenIdx;
+            }
+        }
+
+        return -1;
+    }
+
+    static injectEntriesIntoTable(content, tableKeyPath, entriesToInject, indentLevel = 1) {
+        const closePos = this.findTableClosePosition(content, tableKeyPath);
+        if (closePos === -1) return content;
+
+        let before = content.substring(0, closePos).trimEnd();
+        if (!before.endsWith(',') && !before.endsWith('{')) {
+            before += ',';
+        }
+
+        const indent = '    '.repeat(indentLevel);
+        const formattedBlocks = entriesToInject.map(e => {
+            const block = e.block || `${e.key} = ${e.rawText}`;
+            const lines = block.split(/\r?\n/);
+            return lines.map(line => {
+                if (line.trim() === '') return '';
+                return line.startsWith(indent) ? line : indent + line.trim();
+            }).join('\n') + (block.trim().endsWith(',') ? '' : ',');
+        }).join('\n\n');
+
+        const after = content.substring(closePos);
+        const commentNotice = tableKeyPath
+            ? `${indent}-- [AutoUpdater] New settings added to ${tableKeyPath}:`
+            : `${indent}-- [AutoUpdater] New settings added from update:`;
+
+        return before + '\n\n' + commentNotice + '\n' + formattedBlocks + '\n' + '    '.repeat(Math.max(0, indentLevel - 1)) + after;
+    }
+
+    static mergeLuaReturnTable(localCode, upstreamCode) {
         const stats = { preserved: 0, added: 0, addedKeys: [] };
 
+        const localParsed = this.parseLuaTable(localCode);
+        const upstreamParsed = this.parseLuaTable(upstreamCode);
+
+        if (!localParsed || !upstreamParsed) {
+            return { mergedContent: localCode, stats };
+        }
+
+        let merged = localCode;
+
+        const processMerge = (locParsed, upParsed, pathPrefix = '', indent = 1) => {
+            const toInject = [];
+
+            for (const [key, upEntry] of upParsed.entries.entries()) {
+                const currentPath = pathPrefix ? `${pathPrefix}.${key}` : key;
+                if (locParsed.entries.has(key)) {
+                    stats.preserved++;
+                    const locEntry = locParsed.entries.get(key);
+                    if (upEntry.isTable && locEntry.isTable && upEntry.subTable && locEntry.subTable) {
+                        processMerge(locEntry.subTable, upEntry.subTable, currentPath, indent + 1);
+                    }
+                } else {
+                    stats.added++;
+                    stats.addedKeys.push(currentPath);
+                    toInject.push(upEntry);
+                }
+            }
+
+            if (toInject.length > 0) {
+                merged = this.injectEntriesIntoTable(merged, pathPrefix, toInject, indent);
+            }
+        };
+
+        processMerge(localParsed, upstreamParsed);
+        return { mergedContent: merged, stats };
+    }
+
+    static mergeLua(localContent, upstreamContent) {
+        const isReturnTable = /^\s*(?:local\s+)?return\s*\{/m.test(localContent) ||
+                              /^\s*(?:local\s+)?return\s*\{/m.test(upstreamContent) ||
+                              /^\s*(?:Config|Settings|SETTINGS)\s*=\s*\{/m.test(localContent);
+
+        if (isReturnTable) {
+            const tableMergeResult = this.mergeLuaReturnTable(localContent, upstreamContent);
+            if (tableMergeResult.stats.preserved > 0 || tableMergeResult.stats.added > 0) {
+                return tableMergeResult;
+            }
+        }
+
+        const stats = { preserved: 0, added: 0, addedKeys: [] };
         const localParsed = this.parseLuaConfig(localContent);
         const upstreamParsed = this.parseLuaConfig(upstreamContent);
 
