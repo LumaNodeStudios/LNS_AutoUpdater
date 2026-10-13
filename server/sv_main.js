@@ -59,6 +59,11 @@ if (fs.existsSync(configPath)) {
 const github = new GitHubClient(config.githubToken || null);
 const discord = new DiscordNotifier(config.discordWebhook || null);
 
+function cleanVersion(v) {
+    if (!v) return '';
+    return v.toString().trim().replace(/^v/i, '');
+}
+
 class AutoUpdaterCore {
     static async checkForUpdate(scriptConfig) {
         const resourceName = scriptConfig.resourceName;
@@ -71,10 +76,41 @@ class AutoUpdaterCore {
         const state = StateManager.loadResourceState(targetDir);
         const currentSha = state.sha || null;
         const currentTag = state.tag || null;
+        let manifestVersion = null;
+        const manifestPath = path.join(targetDir, 'fxmanifest.lua');
+        if (fs.existsSync(manifestPath)) {
+            try {
+                const manifestContent = fs.readFileSync(manifestPath, 'utf8');
+                const versionRegex = /(^\s*version(?:\s+|\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/im;
+                const match = manifestContent.match(versionRegex);
+                if (match) {
+                    manifestVersion = match[2].trim();
+                }
+            } catch (e) {
+                // Ignore manifest read errors
+            }
+        }
 
         if (scriptConfig.useReleases) {
             const release = await github.getLatestRelease(scriptConfig.githubRepo);
-            const hasUpdate = !currentTag || currentTag !== release.tagName;
+            const cleanRelease = cleanVersion(release.tagName);
+            const cleanCurrentTag = cleanVersion(currentTag);
+            const cleanManifestVer = cleanVersion(manifestVersion);
+            const isMatch = (cleanCurrentTag && cleanCurrentTag === cleanRelease) ||
+                (cleanManifestVer && cleanManifestVer === cleanRelease);
+            const hasUpdate = !isMatch;
+
+            if (!hasUpdate && (!currentTag || cleanCurrentTag !== cleanRelease)) {
+                StateManager.saveResourceState(targetDir, {
+                    repo: scriptConfig.githubRepo,
+                    ref: release.tagName,
+                    sha: null,
+                    tag: release.tagName,
+                    updatedAt: new Date().toISOString(),
+                    lastCommitMessage: release.body
+                });
+            }
+
             return {
                 hasUpdate,
                 latestInfo: {
@@ -85,7 +121,7 @@ class AutoUpdaterCore {
                     date: release.publishedAt,
                     url: release.url
                 },
-                currentRef: currentTag
+                currentRef: currentTag || manifestVersion || 'None'
             };
         } else {
             const branch = scriptConfig.branch || 'main';
@@ -107,13 +143,24 @@ class AutoUpdaterCore {
         }
     }
 
-    static async updateResource(scriptConfig) {
+    static async updateResource(scriptConfig, options = {}) {
         const resourceName = scriptConfig.resourceName;
         const targetDir = PathHelper.getResourceRoot(resourceName);
 
+        const updateCheck = await this.checkForUpdate(scriptConfig);
+        if (!updateCheck.hasUpdate && !options.force) {
+            Logger.info(`Resource ${Colors.Cyan}${resourceName}${Colors.Reset} is already up to date (${updateCheck.currentRef}). Skipping download.`);
+            return {
+                alreadyUpToDate: true,
+                resourceName,
+                currentRef: updateCheck.currentRef,
+                configStats: { preserved: 0, added: 0, addedKeys: [] },
+                latestInfo: updateCheck.latestInfo
+            };
+        }
+
         Logger.info(`Starting update for resource ${Colors.Cyan}${resourceName}${Colors.Reset} from ${scriptConfig.githubRepo}...`);
 
-        const updateCheck = await this.checkForUpdate(scriptConfig);
         const latestInfo = updateCheck.latestInfo;
         const refToDownload = latestInfo.ref;
 
@@ -191,7 +238,7 @@ class AutoUpdaterCore {
             if (rawVersion) {
                 try {
                     let manifestContent = fs.readFileSync(manifestPath, 'utf8');
-                    const versionRegex = /(version\s+['"])([^'"]+)(['"])/i;
+                    const versionRegex = /(^\s*version(?:\s+|\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/im;
                     if (versionRegex.test(manifestContent)) {
                         const currentManifestVersion = manifestContent.match(versionRegex)[2];
                         if (currentManifestVersion !== rawVersion) {
@@ -199,6 +246,11 @@ class AutoUpdaterCore {
                             fs.writeFileSync(manifestPath, manifestContent, 'utf8');
                             Logger.success(`Updated ${Colors.Cyan}${resourceName}${Colors.Reset} fxmanifest.lua version: ${Colors.Yellow}${currentManifestVersion}${Colors.Reset} -> ${Colors.Green}${rawVersion}${Colors.Reset}`);
                         }
+                    } else {
+                        const newline = manifestContent.includes('\r\n') ? '\r\n' : '\n';
+                        manifestContent = manifestContent.trimEnd() + `${newline}version '${rawVersion}'${newline}`;
+                        fs.writeFileSync(manifestPath, manifestContent, 'utf8');
+                        Logger.success(`Added ${Colors.Cyan}${resourceName}${Colors.Reset} fxmanifest.lua version: ${Colors.Green}${rawVersion}${Colors.Reset}`);
                     }
                 } catch (err) {
                     Logger.warn(`Could not sync fxmanifest.lua version: ${err.message}`);
@@ -245,29 +297,37 @@ class AutoUpdaterCore {
         const updatesAvailable = [];
 
         for (const script of config.managedScripts) {
+            let check;
             try {
-                const check = await this.checkForUpdate(script);
-                if (check.hasUpdate) {
-                    updatesAvailable.push({ script, check });
-                    Logger.warn(`Update available for ${Colors.Yellow}${script.resourceName}${Colors.Reset} (${check.currentRef} -> ${check.latestInfo.shortRef || check.latestInfo.ref}): ${check.latestInfo.message}`);
-
-                    if (script.autoUpdate) {
-                        Logger.info(`Auto-update is enabled for ${script.resourceName}. Starting auto-update...`);
-                        await this.updateResource(script);
-                    } else {
-                        await discord.notifyUpdateAvailable({
-                            resourceName: script.resourceName,
-                            repo: script.githubRepo,
-                            ref: check.latestInfo.shortRef || check.latestInfo.ref,
-                            message: check.latestInfo.message
-                        });
-                    }
-                } else if (!silentIfUpToDate) {
-                    Logger.info(`Resource ${Colors.Green}${script.resourceName}${Colors.Reset} is up to date (${check.currentRef}).`);
-                }
+                check = await this.checkForUpdate(script);
             } catch (err) {
                 Logger.error(`Error checking ${script.resourceName}:`, err.message);
-                await discord.notifyError({ resourceName: script.resourceName, error: err.message });
+                await discord.notifyError({ resourceName: script.resourceName, error: err.message, action: 'check' });
+                continue;
+            }
+
+            if (check.hasUpdate) {
+                updatesAvailable.push({ script, check });
+                Logger.warn(`Update available for ${Colors.Yellow}${script.resourceName}${Colors.Reset} (${check.currentRef} -> ${check.latestInfo.shortRef || check.latestInfo.ref}): ${check.latestInfo.message}`);
+
+                if (script.autoUpdate) {
+                    Logger.info(`Auto-update is enabled for ${script.resourceName}. Starting auto-update...`);
+                    try {
+                        await this.updateResource(script);
+                    } catch (updateErr) {
+                        Logger.error(`Error updating ${script.resourceName}:`, updateErr.message);
+                        await discord.notifyError({ resourceName: script.resourceName, error: updateErr.message, action: 'update' });
+                    }
+                } else {
+                    await discord.notifyUpdateAvailable({
+                        resourceName: script.resourceName,
+                        repo: script.githubRepo,
+                        ref: check.latestInfo.shortRef || check.latestInfo.ref,
+                        message: check.latestInfo.message
+                    });
+                }
+            } else if (!silentIfUpToDate) {
+                Logger.info(`Resource ${Colors.Green}${script.resourceName}${Colors.Reset} is up to date (${check.currentRef}).`);
             }
         }
 
@@ -351,7 +411,11 @@ if (isFXServer) {
 
         try {
             const result = await AutoUpdaterCore.updateResource(script);
-            sendFeedback(source, `^2Successfully updated ^3${script.resourceName}^2! Config preserved (${result.configStats.preserved} settings).`);
+            if (result.alreadyUpToDate) {
+                sendFeedback(source, `^2Resource ^3${script.resourceName}^2 is already up to date (${result.currentRef})!`);
+            } else {
+                sendFeedback(source, `^2Successfully updated ^3${script.resourceName}^2! Config preserved (${result.configStats.preserved} settings).`);
+            }
         } catch (e) {
             sendFeedback(source, `^1Update failed: ${e.message}`);
         }

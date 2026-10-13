@@ -104,10 +104,13 @@ class DiscordNotifier {
         });
     }
 
-    async notifyError({ resourceName, error }) {
+    async notifyError({ resourceName, error, action = 'update' }) {
+        const isCheck = action === 'check';
         return this.sendEmbed({
-            title: `Update Failed: ${resourceName}`,
-            description: `An error occurred while attempting to update the script.`,
+            title: isCheck ? `Update Check Failed: ${resourceName}` : `Update Failed: ${resourceName}`,
+            description: isCheck
+                ? `An error occurred while checking GitHub for updates.`
+                : `An error occurred while attempting to update the script.`,
             color: 0xe74c3c,
             fields: [
                 { name: 'Resource', value: `\`${resourceName}\``, inline: true },

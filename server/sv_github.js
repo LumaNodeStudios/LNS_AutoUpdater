@@ -7,19 +7,22 @@ class GitHubClient {
         this.userAgent = 'LumaNode-AutoUpdater-Resource';
     }
 
-    request(requestUrl, options = {}) {
+    request(requestUrl, options = {}, redirectCount = 0, retriesLeft = 2) {
         return new Promise((resolve, reject) => {
             const parsedUrl = new url.URL(requestUrl);
             const headers = {
                 'User-Agent': this.userAgent,
                 'Accept': options.accept || 'application/vnd.github.v3+json',
+                'Connection': 'close',
                 ...(options.headers || {})
             };
 
-            if (this.token) {
-                headers['Authorization'] = this.token.startsWith('Bearer ') || this.token.startsWith('token ')
-                    ? this.token
-                    : `Bearer ${this.token}`;
+            if (this.token && (!options.headers || !options.headers['Authorization'])) {
+                if (parsedUrl.hostname === 'api.github.com' || parsedUrl.hostname.endsWith('.github.com')) {
+                    headers['Authorization'] = this.token.startsWith('Bearer ') || this.token.startsWith('token ')
+                        ? this.token
+                        : `Bearer ${this.token}`;
+                }
             }
 
             const reqOptions = {
@@ -30,13 +33,53 @@ class GitHubClient {
                 headers
             };
 
+            const handleError = (err) => {
+                const isRetryable = err && (
+                    err.code === 'ECONNRESET' ||
+                    err.code === 'ETIMEDOUT' ||
+                    err.code === 'EAI_AGAIN' ||
+                    (err.message && err.message.includes('ECONNRESET'))
+                );
+
+                if (isRetryable && retriesLeft > 0) {
+                    setTimeout(() => {
+                        this.request(requestUrl, options, redirectCount, retriesLeft - 1)
+                            .then(resolve)
+                            .catch(reject);
+                    }, 1000);
+                } else {
+                    reject(err);
+                }
+            };
+
+            const timeoutMs = options.timeout || 60000;
+
             const req = https.request(reqOptions, (res) => {
                 if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
-                    return this.request(res.headers.location, options).then(resolve).catch(reject);
+                    res.resume();
+                    if (redirectCount >= 5) {
+                        return reject(new Error(`Too many redirects encountered for ${requestUrl}`));
+                    }
+                    const nextUrl = new url.URL(res.headers.location, requestUrl).toString();
+                    const nextOptions = { ...options };
+                    if (new url.URL(nextUrl).hostname !== 'api.github.com') {
+                        if (nextOptions.headers) {
+                            const newH = { ...nextOptions.headers };
+                            delete newH['Authorization'];
+                            nextOptions.headers = newH;
+                        }
+                    }
+                    return this.request(nextUrl, nextOptions, redirectCount + 1, retriesLeft).then(resolve).catch(reject);
                 }
 
                 const chunks = [];
-                res.on('data', chunk => chunks.push(chunk));
+                res.on('data', chunk => {
+                    chunks.push(chunk);
+                    req.setTimeout(timeoutMs);
+                });
+
+                res.on('error', handleError);
+
                 res.on('end', () => {
                     const data = Buffer.concat(chunks);
                     resolve({
@@ -47,13 +90,12 @@ class GitHubClient {
                 });
             });
 
-            req.on('error', err => reject(err));
+            req.on('error', handleError);
             req.on('timeout', () => {
-                req.destroy();
-                reject(new Error(`Request timed out for ${requestUrl}`));
+                req.destroy(new Error(`Request timed out after ${timeoutMs}ms for ${requestUrl}`));
             });
 
-            req.setTimeout(options.timeout || 30000);
+            req.setTimeout(timeoutMs);
             req.end();
         });
     }
@@ -112,7 +154,7 @@ class GitHubClient {
         const endpoint = `https://api.github.com/repos/${repo}/zipball/${encodeURIComponent(ref)}`;
         const res = await this.request(endpoint, {
             accept: 'application/vnd.github.v3+json',
-            timeout: 60000
+            timeout: 180000
         });
         this.handleHttpErrors(res, `${repo}@${ref}`);
 
