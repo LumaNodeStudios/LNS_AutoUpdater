@@ -5,7 +5,7 @@ async function main() {
     const args = process.argv.slice(2);
     const command = args[0] || '--help';
 
-    console.log(`\n${Colors.Bright}${Colors.Cyan}=== FiveM Smart AutoUpdater CLI ===${Colors.Reset}\n`);
+    console.log(`\n${Colors.Bright}${Colors.Cyan}=== LumaNode AutoUpdater CLI ===${Colors.Reset}\n`);
 
     if (command === '--check' || command === '-c') {
         Logger.info('Checking all managed scripts for updates...');

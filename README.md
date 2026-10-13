@@ -35,7 +35,7 @@ Developed by **[LumaNode Studios](https://github.com/LumaNodeStudios)**.
 
 ## Overview
 
-Managing updates for multiple FiveM scripts often results in lost server configurations, tedious manual diffing, and downtime. **LNS_AutoUpdater** solves this by monitoring GitHub repositories (releases or branch commits), downloading upstream updates, and smartly merging them into your server resources while keeping all of your local configuration values, comments, and custom variables intact.
+Managing updates for multiple LumaNode scripts often results in lost server configurations, tedious manual diffing, and downtime. **LNS_AutoUpdater** solves this by monitoring GitHub repositories (releases or branch commits), downloading upstream updates, and smartly merging them into your server resources while keeping all of your local configuration values, comments, and custom variables intact.
 
 It operates seamlessly as both an active FiveM server resource and a standalone Node.js CLI tool.
 
@@ -105,7 +105,7 @@ Adding a **GitHub Personal Access Token (PAT)**:
    **[GitHub Settings → Developer Settings → Personal Access Tokens → Tokens (classic)](https://github.com/settings/tokens)**
 2. Click **Generate new token** (choose **Generate new token (classic)**).
 3. Fill in the token details:
-   - **Note**: Give it a clear name (e.g., `FiveM Server AutoUpdater`).
+   - **Note**: Give it a clear name (e.g., `LumaNode AutoUpdater`).
    - **Expiration**: Select a duration (e.g., `90 days`, `1 year`, or `No expiration` for dedicated servers).
    - **Select scopes**:
      - **For Public Repositories Only**: **No scopes are required!** Leave all checkboxes blank.

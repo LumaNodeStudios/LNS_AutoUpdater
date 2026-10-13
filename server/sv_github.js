@@ -4,7 +4,7 @@ const url = require('url');
 class GitHubClient {
     constructor(token = null) {
         this.token = token;
-        this.userAgent = 'FiveM-AutoUpdater-Resource';
+        this.userAgent = 'LumaNode-AutoUpdater-Resource';
     }
 
     request(requestUrl, options = {}) {

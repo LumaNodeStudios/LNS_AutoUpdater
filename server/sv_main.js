@@ -383,7 +383,7 @@ if (isFXServer) {
     }, false);
 
     setImmediate(() => {
-        Logger.info(`${Colors.Bright}FiveM Smart AutoUpdater initialized!${Colors.Reset}`);
+        Logger.info(`${Colors.Bright}LumaNode AutoUpdater initialized!${Colors.Reset}`);
         Logger.info(`Tracking ${config.managedScripts.length} managed script(s). Smart Config Preservation active.`);
 
         AutoUpdaterCore.checkAll(true).catch(e => Logger.error('Boot check error:', e.message));
