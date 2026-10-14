@@ -151,9 +151,15 @@ add_ace group.admin command.update allow
 # Assign players or identifiers to the admin group
 add_principal identifier.fivem:123456 group.admin
 add_principal identifier.license:abcdef123456 group.admin
+
+# (Required if autoRestartResource is true) Grant LNS_AutoUpdater permission to execute restart commands
+add_ace resource.LNS_AutoUpdater command.restart allow
 ```
 
-If you wish to change the permission node, modify `"adminAcePermission"` in `config.json`.
+If you wish to change the admin permission node, modify `"adminAcePermission"` in `config.json`.
+
+> [!IMPORTANT]
+> If `"autoRestartResource": true` is enabled, you **must** add `add_ace resource.LNS_AutoUpdater command.restart allow` to your `server.cfg`. Without this ACE permission, FXServer will block the restart command with: `[cmd] Access denied for command restart.`
 
 ---
 
