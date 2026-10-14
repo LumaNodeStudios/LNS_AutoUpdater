@@ -17,209 +17,327 @@ class ConfigMerger {
         };
     }
 
-    static parseLuaTable(str) {
-        const openIdx = str.indexOf('{');
-        const closeIdx = str.lastIndexOf('}');
-        if (openIdx === -1 || closeIdx === -1) return null;
+    static findMatchingBraceLine(lines, startLineIdx, startCharPos) {
+        let braceCount = 0;
+        let inString = false;
+        let stringChar = '';
+        let inBlockComment = false;
 
-        const inner = str.substring(openIdx + 1, closeIdx);
-        const lines = inner.split(/\r?\n/);
-        const entries = new Map();
+        for (let l = startLineIdx; l < lines.length; l++) {
+            const line = lines[l];
+            const startChar = (l === startLineIdx) ? startCharPos : 0;
 
-        let currentComments = [];
-        let i = 0;
+            for (let c = startChar; c < line.length; c++) {
+                const char = line[c];
+                const nextChar = line[c + 1] || '';
+                const prevChar = c > 0 ? line[c - 1] : '';
 
-        while (i < lines.length) {
+                if (inBlockComment) {
+                    if (char === ']' && nextChar === ']') {
+                        inBlockComment = false;
+                        c++;
+                    }
+                    continue;
+                }
+
+                if (inString) {
+                    if (char === stringChar && prevChar !== '\\') {
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (char === '-' && nextChar === '-') {
+                    if (line[c + 2] === '[' && line[c + 3] === '[') {
+                        inBlockComment = true;
+                        c += 3;
+                        continue;
+                    }
+                    break;
+                }
+
+                if (char === '"' || char === "'") {
+                    inString = true;
+                    stringChar = char;
+                    continue;
+                }
+
+                if (char === '{') {
+                    braceCount++;
+                } else if (char === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                        return l;
+                    }
+                }
+            }
+        }
+        return -1;
+    }
+
+    static checkHasTrailingComma(line) {
+        let codePart = line;
+        const commentIdx = line.indexOf('--');
+        if (commentIdx !== -1) {
+            codePart = line.substring(0, commentIdx);
+        }
+        return codePart.trim().endsWith(',');
+    }
+
+    static addTrailingComma(line) {
+        const commentIdx = line.indexOf('--');
+        if (commentIdx !== -1) {
+            const before = line.substring(0, commentIdx).trimEnd();
+            const comment = line.substring(commentIdx);
+            if (!before.endsWith(',')) {
+                return before + ', ' + comment;
+            }
+            return line;
+        }
+        const trimmed = line.trimEnd();
+        if (!trimmed.endsWith(',')) {
+            return trimmed + ',';
+        }
+        return line;
+    }
+
+    static parseLuaTableStructure(lines, startLineIdx, endLineIdx) {
+        const entries = [];
+        const entriesMap = new Map();
+        let pendingComments = [];
+        let hadLeadingBlank = false;
+        let i = startLineIdx + 1;
+
+        while (i < endLineIdx) {
             const line = lines[i];
             const trimmed = line.trim();
 
             if (trimmed.startsWith('--')) {
-                currentComments.push(line);
+                pendingComments.push(line);
                 i++;
                 continue;
             }
 
             if (trimmed === '') {
-                if (currentComments.length > 5) currentComments = [];
+                if (pendingComments.length > 0) {
+                    pendingComments.push(line);
+                } else {
+                    hadLeadingBlank = true;
+                }
                 i++;
                 continue;
             }
 
-            const match = trimmed.match(/^(?:\[['"]([^'"]+)['"]\]|([a-zA-Z0-9_]+))\s*=\s*(.*)$/);
+            const match = trimmed.match(/^(?:\[['"]?([^'"\]]+)['"]?\]|([a-zA-Z0-9_]+))\s*=\s*(.*)$/);
             if (match) {
                 const key = match[1] || match[2];
-                let valueRest = match[3];
+                const rawKey = match[0].split('=')[0].trim();
+                const valueRest = match[3].trim();
+                const indentMatch = line.match(/^(\s*)/);
+                const indent = indentMatch ? indentMatch[1] : '    ';
 
-                let rawLines = [line];
-                let isTable = valueRest.trim().startsWith('{');
-                let braceCount = 0;
-                let bracketCount = 0;
+                const commentStartLine = pendingComments.length > 0
+                    ? (i - pendingComments.length)
+                    : i;
 
-                for (const ch of valueRest) {
-                    if (ch === '{') braceCount++;
-                    if (ch === '}') braceCount--;
-                    if (ch === '[') bracketCount++;
-                    if (ch === ']') bracketCount--;
-                }
+                const isTable = valueRest.startsWith('{');
+                let entryEndLine = i;
+                let subTable = null;
 
-                let endIdx = i;
-                while (braceCount > 0 && endIdx + 1 < lines.length) {
-                    endIdx++;
-                    const nextLine = lines[endIdx];
-                    rawLines.push(nextLine);
-                    for (const ch of nextLine) {
-                        if (ch === '{') braceCount++;
-                        if (ch === '}') braceCount--;
+                if (isTable) {
+                    const bracePos = line.indexOf('{');
+                    entryEndLine = this.findMatchingBraceLine(lines, i, bracePos);
+                    if (entryEndLine === -1) {
+                        entryEndLine = i;
+                    } else {
+                        subTable = this.parseLuaTableStructure(lines, i, entryEndLine);
                     }
                 }
 
-                const rawText = rawLines.join('\n');
-                const block = [...currentComments, rawText].join('\n');
+                const lastLine = lines[entryEndLine];
+                const hasComma = this.checkHasTrailingComma(lastLine);
 
-                let subTable = null;
-                if (isTable) {
-                    const subOpen = rawText.indexOf('{');
-                    subTable = this.parseLuaTable(rawText.substring(subOpen));
-                }
-
-                entries.set(key, {
+                const entry = {
                     key,
-                    rawText,
-                    block,
+                    rawKey,
+                    commentLines: pendingComments.slice(),
+                    commentStartLine,
+                    assignmentStartLine: i,
+                    endLine: entryEndLine,
+                    indent,
                     isTable,
                     subTable,
-                    comments: currentComments.slice()
-                });
+                    hasComma,
+                    hadLeadingBlank,
+                    rawLines: lines.slice(commentStartLine, entryEndLine + 1)
+                };
 
-                i = endIdx + 1;
-                currentComments = [];
+                entries.push(entry);
+                entriesMap.set(key, entry);
+
+                pendingComments = [];
+                hadLeadingBlank = false;
+                i = entryEndLine + 1;
                 continue;
             }
 
-            currentComments = [];
+            pendingComments = [];
+            hadLeadingBlank = false;
             i++;
         }
 
-        return { entries, openIdx, closeIdx };
+        return {
+            entries,
+            entriesMap,
+            startLineIdx,
+            endLineIdx,
+            openBracePos: lines[startLineIdx].indexOf('{')
+        };
     }
 
-    static findTableClosePosition(content, tableKeyPath) {
-        if (!tableKeyPath) return content.lastIndexOf('}');
+    static findTableRoot(lines) {
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmed = line.trim();
+            if (trimmed.startsWith('--')) continue;
 
-        const keys = tableKeyPath.split('.');
-        let searchStart = 0;
+            const match = trimmed.match(/^(?:(?:local\s+)?[a-zA-Z0-9_]+\s*=\s*\{|return\s*\{)/);
+            if (match) {
+                const bracePos = line.indexOf('{');
+                const closeLine = this.findMatchingBraceLine(lines, i, bracePos);
+                if (closeLine !== -1) {
+                    return { startLine: i, closeLine, openBracePos: bracePos };
+                }
+            }
+        }
+        return null;
+    }
 
-        for (let k = 0; k < keys.length; k++) {
-            const key = keys[k];
-            const sub = content.substring(searchStart);
-            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const pattern = new RegExp(`(?:\\[['"]${escapedKey}['"]\\]|\\b${escapedKey}\\b)\\s*=\\s*\\{`);
-            const match = pattern.exec(sub);
-            if (!match) return -1;
+    static mergeTablesContextually(localLines, localStruct, upStruct, stats, pathPrefix = '') {
+        for (let i = 0; i < upStruct.entries.length; i++) {
+            const upEntry = upStruct.entries[i];
+            const currentPath = pathPrefix ? `${pathPrefix}.${upEntry.key}` : upEntry.key;
 
-            const tableOpenIdx = searchStart + match.index + match[0].length;
-            let braceCount = 1;
-            let closeIdx = -1;
+            if (localStruct.entriesMap.has(upEntry.key)) {
+                const localEntry = localStruct.entriesMap.get(upEntry.key);
+                stats.preserved++;
 
-            for (let i = tableOpenIdx; i < content.length; i++) {
-                const c = content[i];
-                if (c === '{') braceCount++;
-                else if (c === '}') {
-                    braceCount--;
-                    if (braceCount === 0) {
-                        closeIdx = i;
+                if (upEntry.isTable && localEntry.isTable && upEntry.subTable && localEntry.subTable) {
+                    this.mergeTablesContextually(localLines, localEntry.subTable, upEntry.subTable, stats, currentPath);
+                    const newCloseLine = this.findMatchingBraceLine(localLines, localStruct.startLineIdx, localStruct.openBracePos);
+                    localStruct = this.parseLuaTableStructure(localLines, localStruct.startLineIdx, newCloseLine);
+                }
+            } else {
+                stats.added++;
+                stats.addedKeys.push(currentPath);
+
+                let anchorKey = null;
+                let insertPos = 'after';
+
+                for (let p = i - 1; p >= 0; p--) {
+                    const candKey = upStruct.entries[p].key;
+                    if (localStruct.entriesMap.has(candKey)) {
+                        anchorKey = candKey;
+                        insertPos = 'after';
                         break;
                     }
                 }
-            }
 
-            if (closeIdx === -1) return -1;
+                if (!anchorKey) {
+                    for (let n = i + 1; n < upStruct.entries.length; n++) {
+                        const candKey = upStruct.entries[n].key;
+                        if (localStruct.entriesMap.has(candKey)) {
+                            anchorKey = candKey;
+                            insertPos = 'before';
+                            break;
+                        }
+                    }
+                }
 
-            if (k === keys.length - 1) {
-                return closeIdx;
-            } else {
-                searchStart = tableOpenIdx;
+                let targetLineIdx = -1;
+
+                if (anchorKey && insertPos === 'after') {
+                    const anchorEntry = localStruct.entriesMap.get(anchorKey);
+                    localLines[anchorEntry.endLine] = this.addTrailingComma(localLines[anchorEntry.endLine]);
+                    targetLineIdx = anchorEntry.endLine + 1;
+                } else if (anchorKey && insertPos === 'before') {
+                    const anchorEntry = localStruct.entriesMap.get(anchorKey);
+                    targetLineIdx = anchorEntry.commentStartLine;
+                } else {
+                    targetLineIdx = localStruct.endLineIdx;
+                    let prevNonEmpty = targetLineIdx - 1;
+                    while (prevNonEmpty > localStruct.startLineIdx && localLines[prevNonEmpty].trim() === '') {
+                        prevNonEmpty--;
+                    }
+                    if (prevNonEmpty > localStruct.startLineIdx) {
+                        localLines[prevNonEmpty] = this.addTrailingComma(localLines[prevNonEmpty]);
+                    }
+                }
+
+                const linesToInsert = [];
+                if (insertPos === 'after' && (upEntry.hadLeadingBlank || upEntry.commentLines.length > 0)) {
+                    const prevLine = localLines[targetLineIdx - 1];
+                    if (prevLine && prevLine.trim() !== '') {
+                        linesToInsert.push('');
+                    }
+                }
+
+                for (let r = 0; r < upEntry.rawLines.length; r++) {
+                    linesToInsert.push(upEntry.rawLines[r]);
+                }
+
+                const lastIdx = linesToInsert.length - 1;
+                linesToInsert[lastIdx] = this.addTrailingComma(linesToInsert[lastIdx]);
+
+                if (insertPos === 'before' && (upEntry.hadLeadingBlank || upEntry.commentLines.length > 0)) {
+                    linesToInsert.push('');
+                }
+
+                localLines.splice(targetLineIdx, 0, ...linesToInsert);
+
+                const newCloseLine = this.findMatchingBraceLine(localLines, localStruct.startLineIdx, localStruct.openBracePos);
+                localStruct = this.parseLuaTableStructure(localLines, localStruct.startLineIdx, newCloseLine);
             }
         }
-
-        return -1;
-    }
-
-    static injectEntriesIntoTable(content, tableKeyPath, entriesToInject, indentLevel = 1) {
-        const closePos = this.findTableClosePosition(content, tableKeyPath);
-        if (closePos === -1) return content;
-
-        let before = content.substring(0, closePos).trimEnd();
-        if (!before.endsWith(',') && !before.endsWith('{')) {
-            before += ',';
-        }
-
-        const indent = '    '.repeat(indentLevel);
-        const formattedBlocks = entriesToInject.map(e => {
-            const block = e.block || `${e.key} = ${e.rawText}`;
-            const lines = block.split(/\r?\n/);
-            return lines.map(line => {
-                if (line.trim() === '') return '';
-                return line.startsWith(indent) ? line : indent + line.trim();
-            }).join('\n') + (block.trim().endsWith(',') ? '' : ',');
-        }).join('\n\n');
-
-        const after = content.substring(closePos);
-        const commentNotice = tableKeyPath
-            ? `${indent}-- [AutoUpdater] New settings added to ${tableKeyPath}:`
-            : `${indent}-- [AutoUpdater] New settings added from update:`;
-
-        return before + '\n\n' + commentNotice + '\n' + formattedBlocks + '\n' + '    '.repeat(Math.max(0, indentLevel - 1)) + after;
     }
 
     static mergeLuaReturnTable(localCode, upstreamCode) {
         const stats = { preserved: 0, added: 0, addedKeys: [] };
+        const eol = localCode.includes('\r\n') ? '\r\n' : '\n';
 
-        const localParsed = this.parseLuaTable(localCode);
-        const upstreamParsed = this.parseLuaTable(upstreamCode);
+        const localLines = localCode.split(/\r?\n/);
+        const upstreamLines = upstreamCode.split(/\r?\n/);
 
-        if (!localParsed || !upstreamParsed) {
-            return { mergedContent: localCode, stats };
+        const localRoot = this.findTableRoot(localLines);
+        const upRoot = this.findTableRoot(upstreamLines);
+
+        if (!localRoot || !upRoot) {
+            return null;
         }
 
-        let merged = localCode;
+        const localStruct = this.parseLuaTableStructure(localLines, localRoot.startLine, localRoot.closeLine);
+        const upStruct = this.parseLuaTableStructure(upstreamLines, upRoot.startLine, upRoot.closeLine);
 
-        const processMerge = (locParsed, upParsed, pathPrefix = '', indent = 1) => {
-            const toInject = [];
+        if (localStruct.entries.length === 0 && upStruct.entries.length === 0) {
+            return null;
+        }
 
-            for (const [key, upEntry] of upParsed.entries.entries()) {
-                const currentPath = pathPrefix ? `${pathPrefix}.${key}` : key;
-                if (locParsed.entries.has(key)) {
-                    stats.preserved++;
-                    const locEntry = locParsed.entries.get(key);
-                    if (upEntry.isTable && locEntry.isTable && upEntry.subTable && locEntry.subTable) {
-                        processMerge(locEntry.subTable, upEntry.subTable, currentPath, indent + 1);
-                    }
-                } else {
-                    stats.added++;
-                    stats.addedKeys.push(currentPath);
-                    toInject.push(upEntry);
-                }
-            }
+        this.mergeTablesContextually(localLines, localStruct, upStruct, stats);
 
-            if (toInject.length > 0) {
-                merged = this.injectEntriesIntoTable(merged, pathPrefix, toInject, indent);
-            }
+        return {
+            mergedContent: localLines.join(eol),
+            stats
         };
-
-        processMerge(localParsed, upstreamParsed);
-        return { mergedContent: merged, stats };
     }
 
     static mergeLua(localContent, upstreamContent) {
-        const isReturnTable = /^\s*(?:local\s+)?return\s*\{/m.test(localContent) ||
-                              /^\s*(?:local\s+)?return\s*\{/m.test(upstreamContent) ||
-                              /^\s*(?:Config|Settings|SETTINGS)\s*=\s*\{/m.test(localContent);
+        const isTableFormat = /^\s*(?:return\s*\{|(?:local\s+)?[a-zA-Z0-9_]+\s*=\s*\{)/m.test(localContent) ||
+            /^\s*(?:return\s*\{|(?:local\s+)?[a-zA-Z0-9_]+\s*=\s*\{)/m.test(upstreamContent);
 
-        if (isReturnTable) {
-            const tableMergeResult = this.mergeLuaReturnTable(localContent, upstreamContent);
-            if (tableMergeResult.stats.preserved > 0 || tableMergeResult.stats.added > 0) {
-                return tableMergeResult;
+        if (isTableFormat) {
+            const tableResult = this.mergeLuaReturnTable(localContent, upstreamContent);
+            if (tableResult && (tableResult.stats.preserved > 0 || tableResult.stats.added > 0)) {
+                return tableResult;
             }
         }
 
@@ -227,10 +345,15 @@ class ConfigMerger {
         const localParsed = this.parseLuaConfig(localContent);
         const upstreamParsed = this.parseLuaConfig(upstreamContent);
 
-        let merged = localContent;
-        const injectedBlocks = [];
+        const eol = localContent.includes('\r\n') ? '\r\n' : '\n';
+        let localLines = localContent.split(/\r?\n/);
 
-        for (const [keyPath, upItem] of upstreamParsed.assignments.entries()) {
+        const upstreamKeys = Array.from(upstreamParsed.assignments.keys());
+
+        for (let i = 0; i < upstreamKeys.length; i++) {
+            const keyPath = upstreamKeys[i];
+            const upItem = upstreamParsed.assignments.get(keyPath);
+
             if (localParsed.assignments.has(keyPath)) {
                 stats.preserved++;
 
@@ -247,7 +370,8 @@ class ConfigMerger {
                     }
 
                     if (newSubKeys.length > 0) {
-                        merged = this.injectSubKeysIntoTable(merged, keyPath, newSubKeys);
+                        const mergedStr = this.injectSubKeysIntoTable(localLines.join(eol), keyPath, newSubKeys);
+                        localLines = mergedStr.split(/\r?\n/);
                         for (const nk of newSubKeys) {
                             stats.added++;
                             stats.addedKeys.push(`${keyPath}.${nk.subKey}`);
@@ -257,27 +381,55 @@ class ConfigMerger {
             } else {
                 stats.added++;
                 stats.addedKeys.push(keyPath);
-                injectedBlocks.push(upItem.fullBlock);
+
+                let anchorKey = null;
+                let insertPos = 'after';
+
+                for (let p = i - 1; p >= 0; p--) {
+                    const prevKey = upstreamKeys[p];
+                    if (localParsed.assignments.has(prevKey)) {
+                        anchorKey = prevKey;
+                        insertPos = 'after';
+                        break;
+                    }
+                }
+
+                if (!anchorKey) {
+                    for (let n = i + 1; n < upstreamKeys.length; n++) {
+                        const nextKey = upstreamKeys[n];
+                        if (localParsed.assignments.has(nextKey)) {
+                            anchorKey = nextKey;
+                            insertPos = 'before';
+                            break;
+                        }
+                    }
+                }
+
+                const blockLines = upItem.fullBlock.split(/\r?\n/);
+
+                if (anchorKey && insertPos === 'after') {
+                    const anchorItem = localParsed.assignments.get(anchorKey);
+                    const anchorIdx = localLines.findIndex(l => l.includes(anchorItem.rawKey));
+                    if (anchorIdx !== -1) {
+                        localLines.splice(anchorIdx + 1, 0, '', ...blockLines);
+                    } else {
+                        localLines.push('', ...blockLines);
+                    }
+                } else if (anchorKey && insertPos === 'before') {
+                    const anchorItem = localParsed.assignments.get(anchorKey);
+                    const anchorIdx = localLines.findIndex(l => l.includes(anchorItem.rawKey));
+                    if (anchorIdx !== -1) {
+                        localLines.splice(anchorIdx, 0, ...blockLines, '');
+                    } else {
+                        localLines.push('', ...blockLines);
+                    }
+                } else {
+                    localLines.push('', ...blockLines);
+                }
             }
         }
 
-        if (injectedBlocks.length > 0) {
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const injectionHeader = [
-                '',
-                '--------------------------------------------------------------------------------',
-                `-- [AutoUpdater] NEW SETTINGS INJECTED FROM GITHUB UPDATE (${timestamp} UTC)`,
-                '-- The following options were added in the latest version of this script:',
-                '--------------------------------------------------------------------------------',
-                ...injectedBlocks,
-                '--------------------------------------------------------------------------------',
-                ''
-            ].join('\n');
-
-            merged = merged.trimEnd() + '\n' + injectionHeader;
-        }
-
-        return { mergedContent: merged, stats };
+        return { mergedContent: localLines.join(eol), stats };
     }
 
     static injectSubKeysIntoTable(content, tableKeyPath, newSubKeys) {
@@ -291,7 +443,7 @@ class ConfigMerger {
                 return `${tableKeyPath}['${k.subKey}'] = ${k.raw.trim()}${comment}`;
             }).join('\n');
 
-            return content.trimEnd() + '\n\n-- [AutoUpdater] New sub-settings added to ' + tableKeyPath + ':\n' + assignments + '\n';
+            return content.trimEnd() + '\n\n' + assignments + '\n';
         }
 
         const startPos = match.index + match[0].length;
@@ -331,7 +483,7 @@ class ConfigMerger {
 
         const linesToInsert = newSubKeys.map(k => {
             const comment = k.comment ? ` ${k.comment}` : '';
-            return `    ['${k.subKey}'] = ${k.raw.trim()},${comment} -- [New setting from update]`;
+            return `    ['${k.subKey}'] = ${k.raw.trim()},${comment}`;
         }).join('\n');
 
         let beforeClose = content.substring(0, closePos).trimEnd();
@@ -538,26 +690,37 @@ class ConfigMerger {
             return { mergedContent: localJsonStr, stats };
         }
 
-        const deepMerge = (target, source, currentPath = '') => {
+        const deepMergeOrdered = (target, source, currentPath = '') => {
+            const merged = {};
+
             for (const [key, sourceVal] of Object.entries(source)) {
                 const fullPath = currentPath ? `${currentPath}.${key}` : key;
                 if (!(key in target)) {
-                    target[key] = sourceVal;
+                    merged[key] = sourceVal;
                     stats.added++;
                     stats.addedKeys.push(fullPath);
                 } else if (
                     typeof sourceVal === 'object' && sourceVal !== null && !Array.isArray(sourceVal) &&
                     typeof target[key] === 'object' && target[key] !== null && !Array.isArray(target[key])
                 ) {
-                    deepMerge(target[key], sourceVal, fullPath);
+                    merged[key] = deepMergeOrdered(target[key], sourceVal, fullPath);
                 } else {
+                    merged[key] = target[key];
                     stats.preserved++;
                 }
             }
-            return target;
+
+            for (const [key, targetVal] of Object.entries(target)) {
+                if (!(key in merged)) {
+                    merged[key] = targetVal;
+                    stats.preserved++;
+                }
+            }
+
+            return merged;
         };
 
-        const result = deepMerge(localObj, upstreamObj);
+        const result = deepMergeOrdered(localObj, upstreamObj);
         return {
             mergedContent: JSON.stringify(result, null, 4),
             stats
