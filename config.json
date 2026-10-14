@@ -31,6 +31,46 @@
         "shared/settings.lua"
       ],
       "ignoreFiles": []
+    },
+    {
+      "resourceName": "LNS_Appearance",
+      "githubRepo": "LumaNodeStudios/LNS_Appearance",
+      "branch": "main",
+      "useReleases": true,
+      "autoUpdate": true,
+      "subfolder": "",
+      "configFiles": [
+        "shared/blacklist.lua",
+        "shared/peds.lua",
+        "shared/settings.lua",
+        "shared/tattoos.lua",
+        "shared/theme.lua"
+      ],
+      "ignoreFiles": []
+    },
+    {
+      "resourceName": "LNS_Shops",
+      "githubRepo": "LumaNodeStudios/LNS_Shops",
+      "branch": "main",
+      "useReleases": true,
+      "autoUpdate": true,
+      "subfolder": "",
+      "configFiles": [
+        "shared/settings.lua"
+      ],
+      "ignoreFiles": []
+    },
+    {
+      "resourceName": "LNS_ItemThrowing",
+      "githubRepo": "LumaNodeStudios/LNS_ItemThrowing",
+      "branch": "main",
+      "useReleases": true,
+      "autoUpdate": true,
+      "subfolder": "",
+      "configFiles": [
+        "shared/settings.lua"
+      ],
+      "ignoreFiles": []
     }
   ]
 }
