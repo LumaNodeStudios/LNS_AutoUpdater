@@ -684,8 +684,10 @@ class ConfigMerger {
 
         let localObj, upstreamObj;
         try {
-            localObj = JSON.parse(localJsonStr);
-            upstreamObj = JSON.parse(upstreamJsonStr);
+            const cleanLocal = localJsonStr.replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m, g) => g ? '' : m);
+            const cleanUpstream = upstreamJsonStr.replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m, g) => g ? '' : m);
+            localObj = JSON.parse(cleanLocal);
+            upstreamObj = JSON.parse(cleanUpstream);
         } catch (e) {
             return { mergedContent: localJsonStr, stats };
         }

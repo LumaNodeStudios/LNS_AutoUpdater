@@ -47,7 +47,9 @@ let config = {
 
 if (fs.existsSync(configPath)) {
     try {
-        const loadedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const rawContent = fs.readFileSync(configPath, 'utf8');
+        const cleanJson = rawContent.replace(/\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g, (m, g) => g ? '' : m);
+        const loadedConfig = JSON.parse(cleanJson);
         config = { ...config, ...loadedConfig };
     } catch (e) {
         Logger.error('Failed to parse config.json:', e.message);

@@ -1,24 +1,24 @@
 {
-  "checkIntervalMinutes": 60,
-  "githubToken": "",
-  "backupConfigs": true,
-  "autoRestartResource": false,
-  "adminAcePermission": "command.update",
-  "discordWebhook": null,
-  "managedScripts": [
+  "checkIntervalMinutes": 60, // How often (in minutes) to check GitHub for updates (0 to disable background checks)
+  "githubToken": "", // GitHub Personal Access Token to raise API rate limits from 60 to 5,000 req/hr (optional)
+  "backupConfigs": true, // Create timestamped backups of local configs in .updater_backups/ before updating
+  "autoRestartResource": false, // Automatically restart the resource in FXServer once an update completes
+  "adminAcePermission": "command.update", // ACE permission required to use /update and in-game commands
+  "discordWebhook": null, // Discord webhook URL to send update status and change notifications (null to disable)
+  "managedScripts": [ // List of resources to monitor and update
     {
-      "resourceName": "LNS_Housing",
-      "githubRepo": "LumaNodeStudios/LNS_Housing",
-      "branch": "main",
-      "useReleases": true,
-      "autoUpdate": true,
-      "subfolder": "",
-      "configFiles": [
+      "resourceName": "LNS_Housing", // Folder name of the resource on your server
+      "githubRepo": "LumaNodeStudios/LNS_Housing", // GitHub repository in "owner/repo" format
+      "branch": "main", // Default branch to track if useReleases is set to false
+      "useReleases": true, // Check for GitHub Releases/Tags (true) or latest branch commits (false)
+      "autoUpdate": true, // Automatically download and install updates when detected
+      "subfolder": "", // Subfolder path within the repo if the resource is not in the repository root
+      "configFiles": [ // Configuration files to smart-merge and preserve local settings
         "shared/settings.lua",
         "shared/sv_settings.lua",
         "shared/furniture.lua"
       ],
-      "ignoreFiles": []
+      "ignoreFiles": [] // Files or patterns to never overwrite during an update
     },
     {
       "resourceName": "LNS_Fuel",
